@@ -1,121 +1,122 @@
-# PagineGialle.it Business Scraper
+# PagineGialle.it Business Directory Scraper
 
-Extract structured business listings from PagineGialle.it, one of the main Italian online directories for local businesses, professionals, shops, services, and companies.
+Extract structured public business listings from PagineGialle.it, one of Italy's main online directories for companies, professionals, local shops, restaurants, services, and public-facing business profiles.
 
-This Apify Actor is built for users who need Italian business data for lead generation, local market research, sales prospecting, CRM enrichment, competitor mapping, and B2B data collection.
+This Apify Actor lets you search Italian businesses by category and city, collect directory listing data, and export the results as JSON, CSV, or Excel.
 
-No coding required. Select business categories and Italian cities, run the Actor, and export the results as JSON, CSV, or Excel.
+It is designed for market research, local business mapping, sales preparation, competitor analysis, CRM preparation, and structured directory data collection.
 
 ## What this Actor does
 
-The Actor searches PagineGialle.it by business category and city, then extracts structured business listings from public search result pages.
+The Actor searches PagineGialle.it using business categories and Italian cities, then extracts structured data from public directory result pages.
 
-Example searches:
+Typical searches include:
 
-- restaurants in Rome
-- dentists in Milan
-- lawyers in Naples
-- plumbers in Turin
-- hotels in Florence
-- pharmacies in Bologna
+- construction companies in Bari
+- accountants in Milan
+- notaries in Turin
+- pastry shops in Rome
+- Japanese restaurants in Naples
+- doctors in Bologna
+- wine shops in Florence
 
-You can combine multiple categories and multiple cities in one run.
+You can run a single category and city, or combine multiple categories and multiple cities in one run.
 
-Example: 3 categories x 5 cities = 15 automatic searches.
+Example:
+
+```text
+7 categories x 3 cities = 21 automatic searches
+```
 
 ## Main use cases
 
-### B2B lead generation
+### Italian business directory data collection
 
-Build targeted prospect lists by industry and location.
+Collect structured information from PagineGialle.it listings and turn public directory pages into usable datasets.
+
+Useful for:
+
+- business directories
+- local datasets
+- regional company lists
+- category-based company research
+- Italian market databases
+
+### Local market research
+
+Analyze which businesses are present in specific cities and sectors.
 
 Examples:
 
-- restaurants in Milan
-- dentists in Rome
-- gyms in Naples
-- real estate agencies in Turin
-- lawyers in Bologna
+- how many accountants are listed in Bari
+- how many pastry shops are listed in Milan
+- how many medical practices are listed in Turin
+- which local areas contain more construction companies
+- which business categories are more visible in a city
 
-Useful for sales teams, agencies, consultants, and local service providers.
+### Competitor and territory mapping
 
-### Sales prospecting
+Map local competitors, business density, and local service coverage by category and city.
 
-Collect business names, phone numbers, addresses, categories, ratings, and profile URLs to support outbound sales workflows.
+Useful for agencies, consultants, franchising research, local sales teams, and companies planning expansion in Italy.
 
-Good for:
+### Sales and CRM preparation
 
-- cold calling
-- local outreach
-- partnership research
-- agency prospecting
-- offline-to-online sales targeting
+Create structured business lists before starting manual verification, CRM imports, phone-based workflows, or local business research.
 
-### Local SEO research
+The Actor can collect public business names, phone numbers, addresses, profile URLs, available websites, and available contact links when present in the directory listing.
 
-Analyze the presence of local businesses in specific cities and categories.
+### Local SEO and digital presence research
+
+Analyze local business visibility and compare listings across industries and cities.
 
 Useful for:
 
 - SEO agencies
-- digital marketing consultants
-- local ranking research
-- competitor mapping
-- niche discovery
+- local marketing agencies
+- web agencies
+- consultants selling websites or digital services
+- local visibility analysis
 
-### Market research
+### Data analysis and BI workflows
 
-Estimate how many businesses are active in a category and compare local competition between cities.
-
-Examples:
-
-- number of dentists in Rome vs Milan
-- density of gyms in major Italian cities
-- restaurant competition by city
-- service availability in specific regions
-
-### CRM enrichment
-
-Use extracted public listings to enrich internal CRM records with additional public business information.
-
-Potentially useful fields:
-
-- business name
-- business category
-- address
-- phone number
-- city
-- rating
-- profile URL
-
-### Data analysis and business intelligence
-
-Export the dataset and analyze it with spreadsheets, BI tools, Python, SQL, or CRM platforms.
+Export the dataset and analyze it in spreadsheets, SQL databases, Python scripts, CRM systems, or BI tools.
 
 Possible analysis:
 
-- businesses by category
 - businesses by city
-- average rating by sector
-- local competition mapping
-- phone availability by industry
-- lead segmentation by area
+- businesses by category
+- phone availability
+- website availability
+- contact link availability
+- business profile coverage
+- local competitor density
 
 ## Extracted data
 
-The Actor extracts structured data from public search result listings.
+The Actor extracts structured fields from public PagineGialle.it search result listings.
 
 | Field | Description |
 |---|---|
-| `id` | Internal listing identifier when available |
-| `name` | Business name |
-| `category` | Business category shown in the listing |
+| `id` | Listing identifier when available |
+| `name` | Business or professional name |
+| `category` | Category associated with the listing/search |
 | `phone` | Public phone number when available |
-| `address` | Business address |
+| `email` | Email field, if publicly available in the listing data; often empty |
+| `website` | Business website when available and detected as a real external website |
+| `contactUrl` | Best available external contact link, such as website or WhatsApp |
+| `whatsappUrl` | WhatsApp contact link when available |
+| `address` | Business address or location text |
 | `city` | Search city |
+| `province` | Province field when available |
+| `postalCode` | Postal code field when available |
+| `latitude` | Latitude when available |
+| `longitude` | Longitude when available |
 | `rating` | Public rating when available |
 | `reviewCount` | Review count when available |
 | `imageUrl` | Listing image URL when available |
+| `facebook` | Facebook URL when available |
+| `instagram` | Instagram URL when available |
 | `profileUrl` | Public PagineGialle.it profile URL |
 | `searchCategory` | Category used for the search |
 | `searchCity` | City used for the search |
@@ -123,93 +124,163 @@ The Actor extracts structured data from public search result listings.
 | `source` | Source website name |
 | `scrapedAt` | ISO timestamp of the extraction |
 
-Some fields such as `email`, `website`, `province`, `postalCode`, `latitude`, `longitude`, `facebook`, and `instagram` may be present in the output for schema compatibility, but they can be empty depending on what is publicly visible and on the current extraction level.
+Data availability depends on what is publicly visible in PagineGialle.it result pages. Phone numbers are often available. Websites, WhatsApp links, ratings, images, and other fields depend on the individual listing.
 
-This Actor is currently strongest for local business discovery, phone-based outreach, address collection, and profile URL extraction. It should not be marketed as a guaranteed email scraper.
+## Product positioning
+
+This is a PagineGialle.it business directory scraper.
+
+It is not positioned as a guaranteed email extraction tool or as a full company intelligence provider. The main value is collecting structured public business directory listings by category and city.
 
 ## Input options
 
-### Business categories
+### Categories
 
-Select one or more predefined business categories from the dropdown.
+Select one or more business categories from the input dropdown, or provide custom categories manually.
 
-You can also add custom categories manually.
+Examples:
+
+- `impresa-edile`
+- `commercialista`
+- `notaio`
+- `trattoria`
+- `pasticceria`
+- `sushi`
+- `medico`
+- `gelateria`
+- `enoteca`
 
 ### Cities
 
-Select one or more Italian cities from the dropdown.
+Select one or more Italian cities from the dropdown, or provide custom cities manually.
 
-You can also add custom cities manually.
+Examples:
 
-### Max results per search
+- `bari`
+- `milano`
+- `torino`
+- `roma`
+- `napoli`
+- `bologna`
+- `firenze`
 
-Set the maximum number of listings to collect for each category and city combination.
+### Max results
 
-Example:
+Set the maximum number of records to collect for each category and city combination.
 
-- `200` results for restaurants in Rome
-- `500` results for dentists in Milan
-- `1000` results for hotels across multiple Italian cities
+Examples:
 
-### Output filters
+- `100` for a quick test
+- `500` for medium runs
+- `2000` for larger category/city runs
 
-Optional filters:
+### Filters
+
+Optional filters are available:
 
 - only listings with phone number
 - only listings with website
 - only listings with email
 
-Important: website and email availability depends on what is publicly visible and on the extraction level. If you enable strict email or website filters and those fields are not available in search results, the run may return fewer results or zero results.
+Use filters carefully. If a strict filter is enabled and the selected field is not commonly available for that category, the run can return fewer results.
 
-### Proxy settings
+### Proxy
 
-Apify Proxy is recommended for larger multi-city and multi-category runs.
+Apify Proxy is recommended for larger runs, multiple cities, and multiple categories.
 
-### Advanced raw search queries
+### Advanced search input
 
-Advanced users can provide custom search combinations using JSON:
+Advanced users can provide raw search combinations:
 
 ```json
 [
-  { "what": "ristorante", "where": "roma" },
-  { "what": "dentista", "where": "milano" },
-  { "what": "avvocato", "where": "napoli" }
+  { "what": "commercialista", "where": "bari" },
+  { "what": "notaio", "where": "milano" },
+  { "what": "impresa-edile", "where": "torino" }
 ]
 ```
 
-When raw search queries are provided, they override dropdown category and city selections.
+When advanced searches are provided, they override the standard category/city dropdown combinations.
 
 ## Output formats
 
-Results can be exported from the Apify dataset as:
+Results are saved to the default Apify dataset and can be exported as:
 
 - JSON
 - CSV
 - Excel
+- XML
+- RSS
+- HTML
 
-This makes the Actor suitable for:
+The most common formats for business workflows are CSV and Excel.
 
-- spreadsheets
-- CRMs
-- lead generation workflows
-- data pipelines
-- BI dashboards
-- custom analytics scripts
+## Example input
 
-## Categories: Italian and English
+```json
+{
+  "categories": [
+    "commercialista",
+    "notaio",
+    "impresa-edile"
+  ],
+  "cities": [
+    "bari",
+    "milano",
+    "torino"
+  ],
+  "maxResults": 500,
+  "onlyWithEmail": false,
+  "onlyWithPhone": false,
+  "onlyWithWebsite": false,
+  "useApifyProxy": true,
+  "customCategories": [],
+  "customCities": [],
+  "searches": []
+}
+```
 
-| Italian category | English translation |
+## Example output
+
+```json
+{
+  "id": "dfb3328c-2b7f-4715-a79f-ca2f52c3806a",
+  "name": "Example Business Name",
+  "category": "commercialista",
+  "phone": "080 0000000",
+  "email": "",
+  "website": "https://www.example-business.it",
+  "contactUrl": "https://www.example-business.it",
+  "whatsappUrl": "",
+  "address": "Via Example, 10 - 70100 Bari (BA)",
+  "city": "bari",
+  "rating": 4.5,
+  "profileUrl": "https://www.paginegialle.it/example-business",
+  "searchCategory": "commercialista",
+  "searchCity": "bari",
+  "searchUrl": "https://www.paginegialle.it/ricerca/commercialisti/bari",
+  "source": "paginegialle.it",
+  "scrapedAt": "2026-06-09T17:12:06.240Z"
+}
+```
+
+## Category examples: Italian to English
+
+| Italian category | English meaning |
 |---|---|
+| `impresa-edile` | Construction company |
+| `commercialista` | Accountant / tax consultant |
+| `notaio` | Notary |
+| `trattoria` | Trattoria / restaurant |
+| `pasticceria` | Pastry shop |
+| `sushi` | Sushi / Japanese restaurant |
+| `medico` | Doctor / medical practice |
+| `gelateria` | Ice cream shop |
+| `enoteca` | Wine shop / wine bar |
 | `ristorante` | Restaurant |
 | `pizzeria` | Pizzeria |
-| `bar` | Bar / Cafe |
-| `pasticceria` | Pastry shop |
-| `gelateria` | Ice cream shop |
-| `trattoria` | Trattoria |
-| `enoteca` | Wine bar |
-| `sushi` | Sushi restaurant |
+| `bar` | Bar / cafe |
 | `dentista` | Dentist |
-| `medico` | Doctor / GP |
 | `farmacia` | Pharmacy |
 | `parrucchiere` | Hair salon |
 | `estetista` | Beauty salon |
@@ -218,8 +289,6 @@ This makes the Actor suitable for:
 | `ottico` | Optician |
 | `veterinario` | Veterinarian |
 | `avvocato` | Lawyer |
-| `commercialista` | Accountant |
-| `notaio` | Notary |
 | `architetto` | Architect |
 | `geometra` | Surveyor |
 | `agenzia-immobiliare` | Real estate agency |
@@ -227,14 +296,13 @@ This makes the Actor suitable for:
 | `idraulico` | Plumber |
 | `elettricista` | Electrician |
 | `falegname` | Carpenter |
-| `muratore` | Builder / Mason |
-| `impresa-edile` | Construction company |
+| `muratore` | Builder / mason |
 | `officina-meccanica` | Auto repair shop |
 | `carrozzeria` | Body shop |
 | `hotel` | Hotel |
 | `bed-and-breakfast` | Bed & Breakfast |
-| `agriturismo` | Farm stay / Agriturismo |
-| `palestra` | Gym / Fitness center |
+| `agriturismo` | Farm stay / agriturismo |
+| `palestra` | Gym / fitness center |
 | `piscina` | Swimming pool |
 | `scuola-guida` | Driving school |
 | `supermercato` | Supermarket |
@@ -244,7 +312,7 @@ This makes the Actor suitable for:
 
 ## Supported cities
 
-The Actor includes predefined major Italian cities such as:
+The Actor includes many predefined Italian cities, including:
 
 - Rome
 - Milan
@@ -261,72 +329,16 @@ The Actor includes predefined major Italian cities such as:
 - Padua
 - Trieste
 - Brescia
+- Taranto
 - Lecce
 - Rimini
 - Reggio Calabria
 
-Custom Italian cities can also be added manually.
-
-## Example searches
-
-### Restaurants in Rome
-
-```json
-[
-  { "what": "ristorante", "where": "roma" }
-]
-```
-
-### Dentists in Milan
-
-```json
-[
-  { "what": "dentista", "where": "milano" }
-]
-```
-
-### Lawyers across multiple cities
-
-```json
-[
-  { "what": "avvocato", "where": "roma" },
-  { "what": "avvocato", "where": "milano" },
-  { "what": "avvocato", "where": "napoli" },
-  { "what": "avvocato", "where": "torino" }
-]
-```
-
-### Custom niche search
-
-```json
-[
-  { "what": "tatuaggi", "where": "roma" },
-  { "what": "pompe-funebri", "where": "milano" },
-  { "what": "erboristeria", "where": "bologna" }
-]
-```
-
-## Example output
-
-```json
-{
-  "name": "Example Business Name",
-  "category": "Restaurant",
-  "phone": "+39 06 0000000",
-  "address": "Via Example 10",
-  "city": "roma",
-  "rating": 4.5,
-  "profileUrl": "https://www.paginegialle.it/example-business",
-  "searchCategory": "ristorante",
-  "searchCity": "roma",
-  "source": "paginegialle.it",
-  "scrapedAt": "2026-06-09T12:00:00.000Z"
-}
-```
+Custom cities can also be added manually.
 
 ## Technical details
 
-This Actor is built with:
+The Actor is built with:
 
 - Node.js
 - Apify SDK
@@ -335,66 +347,77 @@ This Actor is built with:
 - Cheerio HTML parsing
 - Apify Dataset export
 
-The scraper builds search URLs from selected categories and cities, normalizes Italian slugs, handles common plural-to-singular category aliases, crawls result pages, extracts listing cards, removes duplicates, and saves structured records to the Apify dataset.
+Technical workflow:
 
-For larger cities, the Actor can also crawl district-level result pages to collect more listings beyond the first result pages.
+1. Builds PagineGialle.it search URLs from category and city inputs.
+2. Normalizes category and city slugs.
+3. Handles known Italian category aliases and public directory slugs.
+4. Crawls the first result pages.
+5. Detects district-level result pages when available.
+6. Crawls district result pages to collect more listings.
+7. Extracts structured listing cards.
+8. Separates real websites from WhatsApp contact links.
+9. Deduplicates records within each category/city run.
+10. Saves results to the Apify dataset.
 
-## Why use this Actor
+## Performance notes
 
-- No coding required
-- Works with predefined and custom categories
-- Supports predefined and custom Italian cities
-- Exports to JSON, CSV, and Excel
-- Suitable for lead generation and market research
-- Built for repeatable Apify workflows
-- Useful for Italian local business datasets
-
-## Recommended usage
-
-For small tests:
+For small tests, use:
 
 - 1 category
 - 1 city
-- 50 to 200 results
+- 50 to 100 max results
 
-For production runs:
+For medium runs, use:
 
-- multiple categories
-- multiple cities
+- 3 to 10 categories
+- 1 to 5 cities
+- 100 to 1000 max results
 - Apify Proxy enabled
-- reasonable max results per search
-- export to CSV or Excel
 
-For large-scale lead generation:
+For larger runs:
 
-- run by region or city group
-- split large jobs into multiple runs
-- deduplicate results after export
-- validate data before outreach
+- split jobs by region or city group
+- keep max results reasonable
+- export and deduplicate after the run if needed
+- validate important records manually before operational use
 
 ## Data quality notes
 
-Data availability depends on what is publicly visible on PagineGialle.it.
+PagineGialle.it listings vary by category, city, and individual business profile.
 
-Phone numbers are commonly available, while other fields may vary depending on the listing.
+Some records may have complete phone and address data. Others may contain only partial information. Website and WhatsApp contact links are only available when visible in the public listing data.
 
-Some listings may have incomplete data, duplicate business names, missing ratings, or generic category labels. Always validate important records before using them in sales, marketing, or CRM workflows.
+A business can appear in more than one category or district result page. The Actor deduplicates records within each search run, but external post-processing can still be useful for large multi-category exports.
 
-## Legal and compliance note
+## Responsible use
 
-This Actor extracts publicly available business listing information.
+This Actor extracts publicly available business directory listing information.
 
-Users are responsible for using the extracted data in compliance with applicable laws and regulations, including GDPR, privacy rules, platform terms, and anti-spam regulations.
-
-Do not use extracted data for unlawful, abusive, deceptive, or non-compliant outreach.
+Users are responsible for using the extracted data in compliance with applicable laws, regulations, privacy rules, and platform terms.
 
 ## Best for
 
-- B2B lead generation
-- Italian business directories
+- PagineGialle.it scraping
+- Italian business directory datasets
+- Local business data collection
+- Market research in Italy
+- Business category mapping
+- City-level competitor analysis
+- CRM preparation
 - Local SEO research
-- Sales prospecting
-- CRM enrichment
-- Market research
-- Competitor analysis
-- Local business intelligence
+- Sales list preparation
+- Public directory data extraction
+
+## Not designed for
+
+- guaranteed email extraction
+- private data extraction
+- full company intelligence enrichment
+- operational decision-making without manual validation
+
+## Summary
+
+PagineGialle.it Business Directory Scraper is a practical Actor for collecting structured public Italian business listings by category and city.
+
+It helps transform PagineGialle.it search results into clean datasets that can be exported, filtered, analyzed, and used in business research workflows.
