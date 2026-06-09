@@ -114,10 +114,8 @@ if (!searches.length) { console.error('Empty searches'); await Actor.exit(); }
 
 let proxyConfiguration;
 if (useProxy) {
-    proxyConfiguration = await Actor.createProxyConfiguration({
-        countryCode: input.proxyCountry ?? 'IT',
-    });
-    console.log('✔ Proxy: Apify residential IT');
+    proxyConfiguration = await Actor.createProxyConfiguration();
+    console.log('✔ Proxy configured (datacenter/residential)');
 } else {
     console.log('Direct connection');
 }
