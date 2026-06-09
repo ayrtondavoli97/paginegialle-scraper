@@ -4,6 +4,27 @@ import * as cheerio from 'cheerio';
 
 const BASE_URL = 'https://www.paginegialle.it';
 
+
+// PagineGialle category slug aliases (plural → singular form used by the site)
+const SLUG_ALIASES = {
+    'avvocati':            'avvocato',
+    'idraulici':           'idraulico',
+    'parrucchieri':        'parrucchiere',
+    'farmacie':            'farmacia',
+    'commercialisti':      'commercialista',
+    'agenzie-immobiliari': 'agenzia-immobiliare',
+    'officine-meccaniche': 'officina-meccanica',
+    'dentisti':            'dentista',
+    'medici':              'medico',
+    'elettricisti':        'elettricista',
+    'fisioterapisti':      'fisioterapista',
+    'veterinari':          'veterinario',
+    'notai':               'notaio',
+    'architetti':          'architetto',
+    'geometri':            'geometra',
+    'psicologi':           'psicologo',
+};
+
 function normalizeSlug(text) {
     return text.toLowerCase().trim()
         .replace(/[\s_/]+/g, '-')
@@ -13,7 +34,8 @@ function normalizeSlug(text) {
 }
 
 function buildUrl(what, where, page = 1) {
-    const base = `${BASE_URL}/ricerca/${normalizeSlug(what)}/${normalizeSlug(where)}`;
+    const whatSlug = SLUG_ALIASES[what.toLowerCase()] ?? normalizeSlug(what);
+    const base = `${BASE_URL}/ricerca/${whatSlug}/${normalizeSlug(where)}`;
     return page > 1 ? `${base}?pg=${page}` : base;
 }
 
