@@ -1,42 +1,33 @@
 """
-PagineGialle.it Business Scraper - v2
-Architecture:
-  Step 1: GET paginegialle.it/ricerca/{what}/{where}
-          → extract feOptions.shiny_pgimp_src (internal API URL)
-  Step 2: GET ssc.paginegialle.it/cgi-bin/jimpres.cgi?...
-          → parse HTML with listing cards (vcard microformat)
-  Step 3: Paginate by incrementing PAGINA and INIZIO params
+PagineGialle.it Business Scraper
+Apify Actor - ayrtondavoli97/paginegialle-scraper
+
+Architecture (discovered by reverse engineering):
+- The 661KB search page HTML contains ALL listings inline in the DOM
+- jimpres.cgi / pgimpres.cgi are tracking pixels, NOT data endpoints
+- Pagination is done via ?pg=2, ?pg=3 on the search page URL
+- Each page is ~661KB with ~25 listings
 """
 
 import asyncio
-import math
 import re
 import json
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 import httpx
 from apify import Actor
 from .utils import clean_phone, clean_text
 
-SEARCH_BASE    = "https://www.paginegialle.it/ricerca/{what}/{where}"
-RESULTS_PER_PAGE = 25  # NADV=25 in API
+SEARCH_BASE = "https://www.paginegialle.it/ricerca/{what}/{where}"
 
-
-HEADERS_HTML = {
+HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
     "Connection": "keep-alive",
-    "Referer": "https://www.paginegialle.it/",
-}
-
-HEADERS_API = {
-    **HEADERS_HTML,
-    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
     "Referer": "https://www.paginegialle.it/",
 }
 
@@ -47,8 +38,6 @@ async def main() -> None:
 
         searches          = inp.get("searches", [])
         max_results       = inp.get("maxResults", 200)
-        use_proxy         = inp.get("useApifyProxy", True)
-        proxy_country     = inp.get("proxyCountry", "IT")
         only_with_phone   = inp.get("onlyWithPhone", False)
         only_with_website = inp.get("onlyWithWebsite", False)
         only_with_email   = inp.get("onlyWithEmail", False)
@@ -57,11 +46,7 @@ async def main() -> None:
             Actor.log.error("Input 'searches' is empty.")
             return
 
-        # Apify internal proxy (10.x.x.x:8011) incompatible with httpx in LIMITED_PERMISSIONS.
-        # Both paginegialle.it and ssc.paginegialle.it work fine direct.
-        proxy_url = None
         Actor.log.info("Direct connection (no proxy)")
-
         kv          = await Actor.open_key_value_store()
         dataset     = await Actor.open_dataset()
         total_saved = 0
@@ -76,7 +61,6 @@ async def main() -> None:
             results = await scrape_search(
                 what=what, where=where,
                 max_results=max_results,
-                proxy_url=proxy_url,
                 only_with_phone=only_with_phone,
                 only_with_website=only_with_website,
                 only_with_email=only_with_email,
@@ -93,110 +77,69 @@ async def main() -> None:
         Actor.log.info(f"Done. Total: {total_saved}")
 
 
-async def fetch(client: httpx.AsyncClient, url: str, headers: dict, kv=None, kv_key: str = "") -> str | None:
-    """Fetch URL, return text or None. Saves raw to KV if key given."""
-    try:
-        resp = await client.get(url, headers=headers)
-        Actor.log.info(f"HTTP {resp.status_code} — {len(resp.text)} chars — {str(resp.url)[:80]}")
-        if kv and kv_key:
-            await kv.set_value(kv_key, resp.text[:120_000],
-                               content_type="text/html; charset=utf-8")
-        if resp.status_code == 200:
-            return resp.text
-        Actor.log.warning(f"Non-200: {resp.status_code}")
-        return None
-    except Exception as e:
-        Actor.log.error(f"Request error: {e}")
-        if kv and kv_key:
-            await kv.set_value(kv_key + "_err", {"error": str(e), "url": url})
-        return None
-
-
-def make_client(proxy_url: str | None) -> httpx.AsyncClient:
-    transport = httpx.AsyncHTTPTransport(proxy=proxy_url) if proxy_url else None
-    return httpx.AsyncClient(follow_redirects=True,
-                             timeout=httpx.Timeout(30.0),
-                             transport=transport)
-
-
-async def scrape_search(what, where, max_results, proxy_url,
+async def scrape_search(what, where, max_results,
                         only_with_phone, only_with_website, only_with_email, kv):
 
     results    = []
     seen_ids   = set()
     what_slug  = normalize_slug(what)
     where_slug = normalize_slug(where)
-    search_url = SEARCH_BASE.format(what=what_slug, where=where_slug)
+    page       = 1
+    total_count = 0
 
-    # ── Single shared client — cookies from step1 carry into step2/3 ──────
-    async with make_client(None) as client:
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True,
+                                  timeout=httpx.Timeout(30.0)) as client:
+        while len(results) < max_results:
+            url = f"{SEARCH_BASE.format(what=what_slug, where=where_slug)}"
+            if page > 1:
+                url += f"?pg={page}"
 
-        # Step 1: load search page → get feOptions with API URL + cookies
-        Actor.log.info(f"Step 1: {search_url}")
-        html = await fetch(client, search_url, HEADERS_HTML,
-                           kv=kv, kv_key=f"search_{what}_{where}")
-        if not html:
-            Actor.log.error("Search page failed")
-            return []
-
-        # Log cookies received from step1
-        cookies = dict(client.cookies)
-        Actor.log.info(f"Session cookies after step1: {list(cookies.keys())}")
-
-        # Step 2: call jimpres.cgi → JS wrapper → decode XOR → pgimpres.cgi URL
-        jimpres_url = extract_api_url(html)
-        if not jimpres_url:
-            Actor.log.error("shiny_pgimp_src not found")
-            await kv.set_value(f"debug_{what}_{where}", {"msg": "no shiny_pgimp_src", "html_head": html[:2000]})
-            return []
-
-        Actor.log.info("Step 2: fetching jimpres.cgi wrapper...")
-        js_wrapper = await fetch(client, jimpres_url, HEADERS_API,
-                                 kv=kv, kv_key=f"jimpres_{what}_{where}")
-        if not js_wrapper:
-            Actor.log.error("jimpres.cgi returned nothing")
-            return []
-
-        real_api_url = extract_real_api_url(js_wrapper)
-        if not real_api_url:
-            Actor.log.error("Could not decode real API URL from JS wrapper")
-            await kv.set_value(f"debug2_{what}_{where}", {"js_snippet": js_wrapper[:500]})
-            return []
-
-        Actor.log.info(f"Step 2 decoded: pgimpres.cgi QTA={get_param(real_api_url, 'QTA')} NADV={get_param(real_api_url, 'NADV')}")
-        total_count = int(get_param(real_api_url, "QTA") or "0")
-        results_per = int(get_param(real_api_url, "NADV") or "25")
-        total_pages = min(
-            math.ceil(total_count / results_per),
-            math.ceil(max_results / results_per),
-        ) if total_count > 0 else 10
-
-        Actor.log.info(f"Total: ~{total_count} → {total_pages} pages")
-        await asyncio.sleep(0.5)
-
-        # Step 3: paginate pgimpres.cgi (real listing endpoint)
-        for page in range(1, total_pages + 1):
-            paged_url = set_pagination(real_api_url, page, results_per)
-            Actor.log.info(f"API page {page}/{total_pages}: {paged_url[:120]}...")
-
-            api_html = await fetch(client, paged_url, HEADERS_API,
-                                   kv=kv, kv_key=f"api_{what}_{where}_p{page}" if page <= 2 else "")
-            if not api_html:
-                Actor.log.warning(f"Page {page} empty/failed, stopping")
+            Actor.log.info(f"GET page {page}: {url}")
+            try:
+                resp = await client.get(url)
+            except Exception as e:
+                Actor.log.error(f"Request error: {e}")
                 break
 
-            if page == 1:
-                await kv.set_value(f"parse_{what}_{where}", {
-                    "api_html_len":  len(api_html),
-                    "api_html_head": api_html[:1500],
-                    "total_count":   total_count,
-                })
+            Actor.log.info(f"HTTP {resp.status_code} — {len(resp.text)} chars")
+            if resp.status_code != 200:
+                break
 
-            listings = parse_api_html(api_html, what, where)
+            html = resp.text
+
+            # On page 1: extract total count and save debug info
+            if page == 1:
+                total_count = extract_total_count(html)
+                Actor.log.info(f"Total count: {total_count}")
+
+                # Save a 5KB slice around the listing area for debug
+                listing_pos = html.find('class="listing"')
+                entry_pos   = html.find('class="entry ')
+                await kv.set_value(f"debug_{what}_{where}", {
+                    "html_len":       len(html),
+                    "total_count":    total_count,
+                    "listing_div_at": listing_pos,
+                    "entry_div_at":   entry_pos,
+                    "listing_snippet": html[listing_pos:listing_pos+2000] if listing_pos > 0 else "",
+                    "entry_snippet":   html[entry_pos:entry_pos+2000] if entry_pos > 0 else "",
+                    # Save chars around where listings should be (after filters)
+                    "mid_html_120k":   html[118000:123000] if len(html) > 120000 else html[-5000:],
+                    "mid_html_150k":   html[148000:153000] if len(html) > 150000 else "",
+                    "mid_html_200k":   html[198000:203000] if len(html) > 200000 else "",
+                })
+                Actor.log.info("Debug info saved to KV")
+
+                # Stop if no results at all
+                if total_count == 0:
+                    Actor.log.warning("Total count is 0, stopping")
+                    break
+
+            # Parse listings from this page's HTML
+            listings = parse_listings(html, what, where)
             Actor.log.info(f"Page {page}: {len(listings)} listings parsed")
 
             if not listings:
-                Actor.log.info("No listings on page, stopping")
+                Actor.log.info("No listings found, stopping")
                 break
 
             for item in listings:
@@ -209,15 +152,22 @@ async def scrape_search(what, where, max_results, proxy_url,
                 results.append(item)
                 if len(results) >= max_results: break
 
-            Actor.log.info(f"Running total: {len(results)}")
+            Actor.log.info(f"Running total: {len(results)}/{max_results}")
             if len(results) >= max_results:
                 break
-            await asyncio.sleep(0.8)
+
+            # Check if there's a next page
+            if not has_next_page(html, page):
+                Actor.log.info("No more pages")
+                break
+
+            page += 1
+            await asyncio.sleep(1.0)
 
     return results
 
 
-# ── URL helpers ───────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def normalize_slug(text: str) -> str:
     text = text.lower().strip()
@@ -228,110 +178,125 @@ def normalize_slug(text: str) -> str:
     return re.sub(r"-+", "-", text).strip("-")
 
 
-def extract_api_url(html: str) -> str | None:
-    """Extract feOptions.shiny_pgimp_src (jimpres.cgi URL) from page HTML."""
-    m = re.search(r'shiny_pgimp_src:\s*"(https://ssc\.paginegialle\.it[^"]+)"', html)
-    if m:
-        return m.group(1)
-    m = re.search(r'"(https://ssc\.paginegialle\.it/cgi-bin/jimpres\.cgi[^"]+)"', html)
-    return m.group(1) if m else None
+def extract_total_count(html: str) -> int:
+    """Extract total result count from page."""
+    # From feOptions QTA param
+    m = re.search(r'QTA=(\d+)', html)
+    if m: return int(m.group(1))
+    # From page text
+    m = re.search(r'"totalCount"\s*:\s*(\d+)', html)
+    if m: return int(m.group(1))
+    m = re.search(r'(\d+)\s+risultati', html, re.IGNORECASE)
+    if m: return int(m.group(1))
+    return 0
 
 
-def extract_real_api_url(js_response: str) -> str | None:
+def has_next_page(html: str, current_page: int) -> bool:
+    """Check if there's a next page link."""
+    next_pattern = rf'pg={current_page + 1}'
+    return next_pattern in html or f'?pg={current_page+1}' in html
+
+
+# ── Parser ────────────────────────────────────────────────────────────────────
+
+def parse_listings(html: str, what: str, where: str) -> list[dict]:
     """
-    Parse the JS wrapper returned by jimpres.cgi.
-    The JS contains _pgimp() which XOR-decodes the real URL (pgimpres.cgi)
-    and builds B.src = decoded_url + params.
-    We extract the params from B.src and build the real URL directly.
-    """
-    # Decode XOR-1 obfuscated base URL
-    # JS: for(i=0;i<L.length;i++) DL += String.fromCharCode(1^L.charCodeAt(i))
-    # For paginegialle.it the encoded string is always the same
-    encoded = "iuuqr;..rrb/q`fhodfh`mmd/hu.bfh,cho.qfhlqsdr/bfh"
-    real_base = "".join(chr(1 ^ ord(c)) for c in encoded)
-    # real_base = "https://ssc.paginegialle.it/cgi-bin/pgimpres.cgi"
-
-    # Extract params from B.src=DL+"?..."+hr+"..."+Math...
-    m = re.search(r'B\.src=DL\+"(\?[^"]+)"\+hr', js_response)
-    if not m:
-        # Try alternate pattern
-        m = re.search(r'B\.src=DL\+"(\?[^"]+)"', js_response)
-    if not m:
-        return None
-
-    params_str = m.group(1)
-    # Add JIMPV if not present (it's in the B.src but let's ensure)
-    if "JIMPV" not in params_str:
-        params_str = "?JIMPV=001&" + params_str[1:]
-
-    return real_base + params_str
-
-
-def get_param(url: str, param: str) -> str | None:
-    parsed = urlparse(url)
-    params = parse_qs(parsed.query, keep_blank_values=True)
-    vals   = params.get(param)
-    return vals[0] if vals else None
-
-
-def set_pagination(url: str, page: int, per_page: int) -> str:
-    """Update PAGINA and INIZIO params for pagination."""
-    parsed = urlparse(url)
-    params = parse_qs(parsed.query, keep_blank_values=True)
-    params["PAGINA"] = [str(page)]
-    params["INIZIO"] = [str((page - 1) * per_page + 1)]
-    new_query = urlencode({k: v[0] for k, v in params.items()})
-    return urlunparse(parsed._replace(query=new_query))
-
-
-# ── Parser for ssc.paginegialle.it API response ───────────────────────────────
-
-def parse_api_html(html: str, what: str, where: str) -> list[dict]:
-    """
-    Parse the HTML returned by ssc.paginegialle.it/cgi-bin/jimpres.cgi
-    This uses hCard/vCard microformat.
+    Parse business listings from PagineGialle search page HTML.
+    The listings use class="entry" divs within class="listing" container.
     """
     listings = []
 
-    # Try JSON first (some API responses return JSON)
-    try:
-        data = json.loads(html)
-        if isinstance(data, list):
-            return [l for l in (extract_json_item(i, what, where) for i in data) if l]
-        if isinstance(data, dict):
-            items = data.get("results", data.get("items", data.get("data", [])))
-            if items:
-                return [l for l in (extract_json_item(i, what, where) for i in items) if l]
-    except Exception:
-        pass
+    # Strategy 1: JSON-LD structured data (most reliable)
+    for m in re.finditer(
+        r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>',
+        html, re.DOTALL | re.IGNORECASE
+    ):
+        try:
+            ld = json.loads(m.group(1).strip())
+            items = ld if isinstance(ld, list) else [ld]
+            for item in items:
+                t = item.get("@type", "")
+                if isinstance(t, list): t = t[0] if t else ""
+                if any(x in str(t) for x in ("Business","Restaurant","Store","Organization","Service","Food")):
+                    listings.append(extract_jsonld_item(item, what, where))
+        except Exception:
+            pass
 
-    # Parse vCard HTML blocks
-    # PagineGialle uses <div class="vcard"> or <li class="vcard">
-    blocks = re.findall(
-        r'<(?:div|li|article)[^>]+class="[^"]*vcard[^"]*"[^>]*>(.*?)</(?:div|li|article)>',
+    if listings:
+        Actor.log.info(f"JSON-LD strategy: {len(listings)} items")
+        return listings
+
+    # Strategy 2: class="entry" divs (PagineGialle v7 listing cards)
+    entry_blocks = re.findall(
+        r'<(?:div|li|article)[^>]+class="[^"]*\bentry\b[^"]*"[^>]*>(.*?)</(?:div|li|article)>',
         html, re.DOTALL | re.IGNORECASE
     )
-
-    if not blocks:
-        # Try broader patterns
-        blocks = re.findall(
-            r'<(?:div|li|article)[^>]+class="[^"]*(?:result|listing|item|company)[^"]*"[^>]*>(.*?)</(?:div|li|article)>',
+    if not entry_blocks:
+        # Try wider pattern
+        entry_blocks = re.findall(
+            r'<(?:div|li|article)[^>]+class="[^"]*(?:entry|result-item|listing-item|company-card)[^"]*"[^>]*>(.*?)</(?:div|li|article)>',
             html, re.DOTALL | re.IGNORECASE
         )
 
-    Actor.log.info(f"API HTML: {len(html)} chars, {len(blocks)} vcard blocks found")
+    Actor.log.info(f"entry blocks found: {len(entry_blocks)}")
+    for block in entry_blocks:
+        item = parse_entry_block(block, what, where)
+        if item and item.get("name") and not is_section_header(item["name"]):
+            listings.append(item)
 
-    for block in blocks:
-        item = parse_vcard_block(block, what, where)
-        if item and item.get("name"):
+    if listings:
+        return listings
+
+    # Strategy 3: microformat hCard
+    vcard_blocks = re.findall(
+        r'<(?:div|li|article)[^>]+class="[^"]*\bvcard\b[^"]*"[^>]*>(.*?)</(?:div|li|article)>',
+        html, re.DOTALL | re.IGNORECASE
+    )
+    for block in vcard_blocks:
+        item = parse_entry_block(block, what, where)
+        if item and item.get("name") and not is_section_header(item["name"]):
             listings.append(item)
 
     return listings
 
 
-def parse_vcard_block(block: str, what: str, where: str) -> dict | None:
-    """Parse a single vCard microformat block from PagineGialle API."""
+def is_section_header(name: str) -> bool:
+    skip = ["più di", "risultati fuori", "ricerche correlate", "risultati per",
+            "in zona", "annunci correlati", "altri risultati", "sponsored"]
+    return any(k in name.lower() for k in skip)
 
+
+def extract_jsonld_item(item: dict, what: str, where: str) -> dict:
+    addr = item.get("address", {})
+    geo  = item.get("geo", {})
+    agg  = item.get("aggregateRating", {}) or {}
+    if not isinstance(addr, dict): addr = {}
+    if not isinstance(geo, dict):  geo  = {}
+    return {
+        "id":          item.get("@id", ""),
+        "name":        clean_text(item.get("name", "")),
+        "subtitle":    "",
+        "description": clean_text(item.get("description", "")),
+        "category":    clean_text(str(item.get("@type", what))),
+        "phone":       clean_phone(item.get("telephone", "")),
+        "email":       clean_text(item.get("email", "")),
+        "website":     clean_text(item.get("url", "")),
+        "address":     clean_text(addr.get("streetAddress", "")),
+        "city":        clean_text(addr.get("addressLocality", where)),
+        "province":    clean_text(addr.get("addressRegion", "")),
+        "postalCode":  clean_text(addr.get("postalCode", "")),
+        "latitude":    float(geo.get("latitude",  0)) or None,
+        "longitude":   float(geo.get("longitude", 0)) or None,
+        "rating":      float(agg.get("ratingValue", 0)) or None,
+        "reviewCount": agg.get("reviewCount"),
+        "image":       item.get("image", ""),
+        "facebook":    "", "instagram":    "",
+        "searchWhat":  what, "searchWhere": where,
+        "sourceUrl":   item.get("url", ""),
+    }
+
+
+def parse_entry_block(block: str, what: str, where: str) -> dict | None:
     def get(patterns):
         for p in patterns:
             m = re.search(p, block, re.DOTALL | re.IGNORECASE)
@@ -339,127 +304,71 @@ def parse_vcard_block(block: str, what: str, where: str) -> dict | None:
                 return clean_text(re.sub(r"<[^>]+>", "", m.group(1)))
         return ""
 
-    # Name: class="org" or class="fn" in hCard
     name = get([
-        r'class="[^"]*\borg\b[^"]*"[^>]*>(.*?)</',
-        r'class="[^"]*\bfn\b[^"]*"[^>]*>(.*?)</',
-        r'class="[^"]*name[^"]*"[^>]*>(.*?)</',
+        r'class="[^"]*\b(?:org|fn|name|denominazione|insegna|businessName|company-name|entry-title)[^"]*"[^>]*>(.*?)</',
         r'itemprop="name"[^>]*>(.*?)</',
+        r'<h[123][^>]*class="[^"]*(?:name|title)[^"]*"[^>]*>(.*?)</h[123]>',
+        r'<h[123][^>]*>(.*?)</h[123]>',
     ])
     if not name:
         return None
 
-    # Phone: class="tel" or href="tel:"
     phone = clean_phone(get([
         r'href="tel:([^"]+)"',
-        r'class="[^"]*\btel\b[^"]*"[^>]*>(.*?)</',
-        r'class="[^"]*phone[^"]*"[^>]*>(.*?)</',
+        r'class="[^"]*\b(?:tel|phone|telefono)[^"]*"[^>]*>(.*?)</',
         r'itemprop="telephone"[^>]*>(.*?)</',
     ]))
+    address = get([
+        r'class="[^"]*(?:street-address|adr|address|indirizzo)[^"]*"[^>]*>(.*?)</',
+        r'itemprop="streetAddress"[^>]*>(.*?)</',
+    ])
+    city = get([
+        r'class="[^"]*(?:locality|city|citta)[^"]*"[^>]*>(.*?)</',
+        r'itemprop="addressLocality"[^>]*>(.*?)</',
+    ]) or where
+    province = get([
+        r'class="[^"]*(?:region|province|provincia)[^"]*"[^>]*>(.*?)</',
+        r'itemprop="addressRegion"[^>]*>(.*?)</',
+    ])
+    postcode = get([
+        r'class="[^"]*(?:postal-code|cap)[^"]*"[^>]*>(.*?)</',
+        r'itemprop="postalCode"[^>]*>(.*?)</',
+    ])
+    category = get([
+        r'class="[^"]*(?:category|categoria|type)[^"]*"[^>]*>(.*?)</',
+    ]) or what
 
-    # Address parts
-    address  = get([r'class="[^"]*street-address[^"]*"[^>]*>(.*?)</', r'itemprop="streetAddress"[^>]*>(.*?)</',  r'class="[^"]*adr[^"]*"[^>]*>(.*?)</'])
-    city     = get([r'class="[^"]*locality[^"]*"[^>]*>(.*?)</',       r'itemprop="addressLocality"[^>]*>(.*?)</']) or where
-    province = get([r'class="[^"]*region[^"]*"[^>]*>(.*?)</',         r'itemprop="addressRegion"[^>]*>(.*?)</'])
-    postcode = get([r'class="[^"]*postal-code[^"]*"[^>]*>(.*?)</',    r'itemprop="postalCode"[^>]*>(.*?)</'])
-
-    # Website
-    web_m = re.search(r'href="(https?://(?!(?:www\.)?paginegialle\.it)[^"]+)"[^>]*class="[^"]*url[^"]*"', block)
-    if not web_m:
-        web_m = re.search(r'class="[^"]*url[^"]*"[^>]*href="(https?://(?!(?:www\.)?paginegialle\.it)[^"]+)"', block)
+    web_m = re.search(
+        r'href="(https?://(?!(?:www\.)?paginegialle\.it)[^"]+)"[^>]*(?:class="[^"]*(?:url|website|sito)[^"]*")?',
+        block)
     website = web_m.group(1) if web_m else ""
 
-    # Email
     em_m  = re.search(r'href="mailto:([^"]+)"', block)
     email = em_m.group(1) if em_m else ""
-    if not email:
-        em_m = re.search(r'[\w._%+\-]+@[\w.\-]+\.[a-zA-Z]{2,}', block)
-        email = em_m.group(0) if em_m else ""
 
-    # Category
-    category = get([r'class="[^"]*category[^"]*"[^>]*>(.*?)</', r'class="[^"]*categoria[^"]*"[^>]*>(.*?)</']) or what
+    id_m  = re.search(r'data-(?:cid|id|pgid)="([^"]+)"', block, re.IGNORECASE)
+    bid   = id_m.group(1) if id_m else ""
 
-    # Rating
-    rating_m = re.search(r'(?:rating|voto|stelle)[^>]*>([0-9.]+)<', block, re.IGNORECASE)
+    lat_m = re.search(r'data-lat="([^"]+)"', block)
+    lon_m = re.search(r'data-(?:lon|lng)="([^"]+)"', block)
+    lat   = float(lat_m.group(1)) if lat_m else None
+    lon   = float(lon_m.group(1)) if lon_m else None
+
+    rating_m = re.search(r'itemprop="ratingValue"[^>]*content="([^"]+)"', block)
     rating   = float(rating_m.group(1)) if rating_m else None
 
-    # ID: data-cid, data-id, or any UUID-like in block
-    id_m = re.search(r'data-(?:cid|id|pgid)="([^"]+)"', block, re.IGNORECASE)
-    if not id_m:
-        id_m = re.search(r'([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})', block, re.IGNORECASE)
-    bid = id_m.group(1) if id_m else ""
+    src_m = re.search(r'href="(https?://(?:www\.)?paginegialle\.it/[^"]+)"', block)
+    source = src_m.group(1) if src_m else ""
 
-    # GPS
-    lat_m = re.search(r'data-lat="([^"]+)"|itemprop="latitude"[^>]*content="([^"]+)"', block)
-    lon_m = re.search(r'data-lon="([^"]+)"|itemprop="longitude"[^>]*content="([^"]+)"', block)
-    lat   = float(lat_m.group(1) or lat_m.group(2)) if lat_m else None
-    lon   = float(lon_m.group(1) or lon_m.group(2)) if lon_m else None
-
-    # Image
-    img_m = re.search(r'<img[^>]+src="([^"]+(?:jpg|jpeg|png|webp)[^"]*)"', block, re.IGNORECASE)
+    img_m = re.search(r'<img[^>]+src="(https?://[^"]+(?:jpg|jpeg|png|webp)[^"]*)"', block, re.IGNORECASE)
     image = img_m.group(1) if img_m else ""
 
-    # Source URL
-    src_m = re.search(r'href="(https?://(?:www\.)?paginegialle\.it/[^"]+)"', block)
-    source_url = src_m.group(1) if src_m else ""
-
     return {
-        "id":          bid,
-        "name":        name,
-        "subtitle":    "",
-        "description": get([r'class="[^"]*(?:note|descrizione|description)[^"]*"[^>]*>(.*?)</']),
-        "category":    category,
-        "phone":       phone,
-        "email":       email,
-        "website":     website,
-        "address":     address,
-        "city":        city,
-        "province":    province,
-        "postalCode":  postcode,
-        "latitude":    lat,
-        "longitude":   lon,
-        "rating":      rating,
-        "reviewCount": None,
-        "image":       image,
-        "facebook":    "",
-        "instagram":   "",
-        "searchWhat":  what,
-        "searchWhere": where,
-        "sourceUrl":   source_url,
-    }
-
-
-def extract_json_item(item: dict, what: str, where: str) -> dict | None:
-    if not isinstance(item, dict): return None
-    place = item.get("place", item.get("address", {}))
-    if not isinstance(place, dict): place = {}
-    lat = place.get("latitude", place.get("lat"))
-    lon = place.get("longitude", place.get("lon", place.get("lng")))
-    raw_phone = item.get("telephone", item.get("phone", item.get("tel", "")))
-    phone = clean_phone(str(raw_phone)) if raw_phone else ""
-    try: rating = float(item.get("rating","")) if item.get("rating") else None
-    except: rating = None
-    return {
-        "id":          str(item.get("id", item.get("pgId",""))),
-        "name":        clean_text(item.get("name", item.get("ragioneSociale", item.get("denominazione","")))),
-        "subtitle":    clean_text(item.get("subtitle","")),
-        "description": clean_text(item.get("description", item.get("descrizione",""))),
-        "category":    clean_text(item.get("category", item.get("categoria", what))),
-        "phone":       phone,
-        "email":       clean_text(item.get("email","")),
-        "website":     clean_text(item.get("website", item.get("sito",""))),
-        "address":     clean_text(place.get("address", place.get("street",""))),
-        "city":        clean_text(place.get("locality", place.get("city", where))),
-        "province":    clean_text(place.get("region","")),
-        "postalCode":  clean_text(place.get("postalCode", place.get("cap",""))),
-        "latitude":    float(lat) if lat else None,
-        "longitude":   float(lon) if lon else None,
-        "rating":      rating,
-        "reviewCount": item.get("reviewCount"),
-        "image":       item.get("image",""),
-        "facebook":    "",
-        "instagram":   "",
-        "searchWhat":  what,
-        "searchWhere": where,
-        "sourceUrl":   item.get("url",""),
+        "id": bid, "name": name, "subtitle": "",
+        "description": get([r'class="[^"]*(?:note|description|descrizione)[^"]*"[^>]*>(.*?)</']),
+        "category": category, "phone": phone, "email": email, "website": website,
+        "address": address, "city": city, "province": province, "postalCode": postcode,
+        "latitude": lat, "longitude": lon, "rating": rating, "reviewCount": None,
+        "image": image, "facebook": "", "instagram": "",
+        "searchWhat": what, "searchWhere": where, "sourceUrl": source,
     }
