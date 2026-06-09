@@ -78,47 +78,49 @@ async def main() -> None:
 
 
 
-async def scrape_districts(district_urls, client, what, where,
+async def scrape_districts(district_urls, what, where,
                            max_results, seen_ids,
                            only_with_phone, only_with_website, only_with_email):
     """Scrape listings from district sub-pages to bypass the 25-result city limit."""
     results = []
-    for url in district_urls:
-        if len(results) >= max_results:
-            break
-        Actor.log.info(f"District: {url.split('/')[-1][:50]}")
-        try:
-            resp = await client.get(url)
-            if resp.status_code != 200:
-                continue
-            html = resp.text
-            card_positions = [m.start() for m in re.finditer(
-                r'class="search-itm[^"]*card-listing[^"]*"', html)]
-            if not card_positions:
-                continue
-            new_count = 0
-            for i, pos in enumerate(card_positions):
-                end = card_positions[i+1] if i+1 < len(card_positions) else pos + 15000
-                block = html[pos:end]
-                item = parse_search_itm_block(block, what, where)
-                if not item or not item.get("name") or is_section_header(item["name"]):
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True,
+                                 timeout=httpx.Timeout(30.0)) as dist_client:
+        for url in district_urls:
+            if len(results) >= max_results:
+                break
+            Actor.log.info(f"District: {url.split('/')[-1][:50]}")
+            try:
+                resp = await dist_client.get(url)
+                if resp.status_code != 200:
                     continue
-                uid = item.get("id") or item.get("name","").lower().strip()
-                if uid in seen_ids:
+                html = resp.text
+                card_positions = [m.start() for m in re.finditer(
+                    r'class="search-itm[^"]*card-listing[^"]*"', html)]
+                if not card_positions:
                     continue
-                seen_ids.add(uid)
-                if only_with_phone   and not item.get("phone"):   continue
-                if only_with_website and not item.get("website"): continue
-                if only_with_email   and not item.get("email"):   continue
-                results.append(item)
-                new_count += 1
-                if len(results) >= max_results:
-                    break
-            Actor.log.info(f"  → {new_count} new listings")
-            await asyncio.sleep(0.5)
-        except Exception as e:
-            Actor.log.warning(f"District error: {e}")
-            continue
+                new_count = 0
+                for i, pos in enumerate(card_positions):
+                    end_pos = card_positions[i+1] if i+1 < len(card_positions) else pos + 15000
+                    block = html[pos:end_pos]
+                    item = parse_search_itm_block(block, what, where)
+                    if not item or not item.get("name") or is_section_header(item["name"]):
+                        continue
+                    uid = item.get("id") or item.get("name","").lower().strip()
+                    if uid in seen_ids:
+                        continue
+                    seen_ids.add(uid)
+                    if only_with_phone   and not item.get("phone"):   continue
+                    if only_with_website and not item.get("website"): continue
+                    if only_with_email   and not item.get("email"):   continue
+                    results.append(item)
+                    new_count += 1
+                    if len(results) >= max_results:
+                        break
+                Actor.log.info(f"  → {new_count} new listings")
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                Actor.log.warning(f"District error: {e}")
+                continue
     return results
 
 
