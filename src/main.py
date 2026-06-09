@@ -19,17 +19,34 @@ from .utils import clean_phone, clean_text
 
 SEARCH_BASE = "https://www.paginegialle.it/ricerca/{what}/{where}"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
-    "Connection": "keep-alive",
-    "Referer": "https://www.paginegialle.it/",
-}
+import random
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+]
+
+def get_headers() -> dict:
+    """Return headers with a random User-Agent."""
+    return {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Referer": "https://www.paginegialle.it/",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0",
+    }
+
+HEADERS = get_headers()  # default static instance
 
 
 async def main() -> None:
@@ -46,25 +63,8 @@ async def main() -> None:
             Actor.log.error("Input 'searches' is empty.")
             return
 
-        import os
-
-        # Setup Apify proxy for IP rotation (avoids rate limiting)
-        if inp.get("useApifyProxy", True):
-            try:
-                proxy_cfg = await Actor.create_proxy_configuration(
-                    country_code=inp.get("proxyCountry", "IT")
-                )
-                proxy_url = await proxy_cfg.new_url()
-                os.environ["APIFY_PROXY_URL"] = proxy_url
-                from urllib.parse import urlparse as _up
-                _p = _up(proxy_url)
-                Actor.log.info(f"Proxy: ***@{_p.hostname}:{_p.port} (IP rotation)")
-            except Exception as e:
-                Actor.log.warning(f"Proxy failed ({e}) — direct connection")
-                os.environ.pop("APIFY_PROXY_URL", None)
-        else:
-            os.environ.pop("APIFY_PROXY_URL", None)
-            Actor.log.info("Direct connection (no proxy)")
+        # Direct connection — Apify internal proxy is incompatible with httpx
+        Actor.log.info("Direct connection")
         kv          = await Actor.open_key_value_store()
         dataset     = await Actor.open_dataset()
         total_saved = 0
@@ -108,7 +108,7 @@ async def fetch_district(client: httpx.AsyncClient, url: str,
     """Fetch and parse a single district page. Uses semaphore for concurrency control."""
     async with semaphore:
         try:
-            resp = await client.get(url)
+            resp = await client.get(url, headers=get_headers())
             if resp.status_code == 202:
                 # Rate limited: brief wait and retry
                 await asyncio.sleep(2.0)
@@ -130,23 +130,15 @@ async def scrape_districts(district_urls, what, where,
     Batch size 8 with 1.5s between batches = ~20s for 100 districts vs 200s sequential.
     """
     results = []
-    BATCH_SIZE = 8
-    BATCH_DELAY = 1.5  # seconds between batches
+    BATCH_SIZE = 4   # 4 concurrent keeps us under rate limit threshold
+    BATCH_DELAY = 2.0  # seconds between batches
     consecutive_zeros = 0
 
     # Semaphore limits concurrent connections
     semaphore = asyncio.Semaphore(BATCH_SIZE)
 
-    import os
-    proxy_url = os.environ.get("APIFY_PROXY_URL")
-    if proxy_url:
-        transport = httpx.AsyncHTTPTransport(proxy=proxy_url)
-    else:
-        transport = None
-
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True,
+    async with httpx.AsyncClient(headers=get_headers(), follow_redirects=True,
                                  timeout=httpx.Timeout(20.0),
-                                 transport=transport,
                                  limits=httpx.Limits(max_connections=10)) as client:
 
         batches = [district_urls[i:i+BATCH_SIZE] for i in range(0, len(district_urls), BATCH_SIZE)]
@@ -213,18 +205,8 @@ async def scrape_search(what, where, max_results,
     page       = 1
     total_count = 0
 
-    # Use Apify proxy if available (rotates IPs to avoid rate limiting)
-    import os
-    proxy_url = os.environ.get("APIFY_PROXY_URL")
-    if proxy_url:
-        Actor.log.info(f"Using Apify proxy for IP rotation")
-        transport = httpx.AsyncHTTPTransport(proxy=proxy_url)
-    else:
-        transport = None
-
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True,
-                                  timeout=httpx.Timeout(30.0),
-                                  transport=transport) as client:
+    async with httpx.AsyncClient(headers=get_headers(), follow_redirects=True,
+                                  timeout=httpx.Timeout(30.0)) as client:
         while len(results) < max_results:
             url = f"{SEARCH_BASE.format(what=what_slug, where=where_slug)}"
             if page > 1:
