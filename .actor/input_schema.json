@@ -8,69 +8,73 @@
       "type": "array",
       "description": "Select one or more business categories to search for.",
       "editor": "select",
-      "items": { "type": "string" },
       "default": ["ristorante"],
       "prefill": ["ristorante"],
-      "enum": [
-        "ristorante", "pizzeria", "bar", "pasticceria", "gelateria",
-        "trattoria", "enoteca", "sushi",
-        "dentista", "medico", "farmacia", "parrucchiere", "estetista",
-        "fisioterapista", "psicologo", "ottico", "veterinario",
-        "avvocato", "commercialista", "notaio", "architetto", "geometra",
-        "agenzia-immobiliare", "agenzia-assicurativa",
-        "idraulico", "elettricista", "falegname", "muratore",
-        "impresa-edile", "officina-meccanica", "carrozzeria",
-        "hotel", "bed-and-breakfast", "agriturismo",
-        "palestra", "piscina", "scuola-guida",
-        "supermercato", "ferramenta", "fiorista", "panificio"
-      ],
-      "enumTitles": [
-        "🍽️ Ristorante", "🍕 Pizzeria", "☕ Bar / Caffè", "🎂 Pasticceria", "🍦 Gelateria",
-        "🍷 Trattoria", "🍾 Enoteca", "🍱 Sushi",
-        "🦷 Dentista", "👨‍⚕️ Medico", "💊 Farmacia", "💇 Parrucchiere", "💅 Estetista",
-        "🏃 Fisioterapista", "🧠 Psicologo", "👓 Ottico", "🐾 Veterinario",
-        "⚖️ Avvocato", "📊 Commercialista", "📜 Notaio", "📐 Architetto", "📏 Geometra",
-        "🏠 Agenzia Immobiliare", "🛡️ Agenzia Assicurativa",
-        "🔧 Idraulico", "⚡ Elettricista", "🪵 Falegname", "🧱 Muratore",
-        "🏗️ Impresa Edile", "🔩 Officina Meccanica", "🚗 Carrozzeria",
-        "🏨 Hotel", "🛏️ Bed & Breakfast", "🌾 Agriturismo",
-        "💪 Palestra", "🏊 Piscina", "🚦 Scuola Guida",
-        "🛒 Supermercato", "🔨 Ferramenta", "🌸 Fiorista", "🥖 Panificio"
-      ]
+      "items": {
+        "type": "string",
+        "enum": [
+          "ristorante", "pizzeria", "bar", "pasticceria", "gelateria",
+          "trattoria", "enoteca", "sushi",
+          "dentista", "medico", "farmacia", "parrucchiere", "estetista",
+          "fisioterapista", "psicologo", "ottico", "veterinario",
+          "avvocato", "commercialista", "notaio", "architetto", "geometra",
+          "agenzia-immobiliare", "agenzia-assicurativa",
+          "idraulico", "elettricista", "falegname", "muratore",
+          "impresa-edile", "officina-meccanica", "carrozzeria",
+          "hotel", "bed-and-breakfast", "agriturismo",
+          "palestra", "piscina", "scuola-guida",
+          "supermercato", "ferramenta", "fiorista", "panificio"
+        ],
+        "enumTitles": [
+          "🍽️ Ristorante", "🍕 Pizzeria", "☕ Bar / Caffè", "🎂 Pasticceria", "🍦 Gelateria",
+          "🍷 Trattoria", "🍾 Enoteca", "🍱 Sushi",
+          "🦷 Dentista", "👨‍⚕️ Medico", "💊 Farmacia", "💇 Parrucchiere", "💅 Estetista",
+          "🏃 Fisioterapista", "🧠 Psicologo", "👓 Ottico", "🐾 Veterinario",
+          "⚖️ Avvocato", "📊 Commercialista", "📜 Notaio", "📐 Architetto", "📏 Geometra",
+          "🏠 Agenzia Immobiliare", "🛡️ Agenzia Assicurativa",
+          "🔧 Idraulico", "⚡ Elettricista", "🪵 Falegname", "🧱 Muratore",
+          "🏗️ Impresa Edile", "🔩 Officina Meccanica", "🚗 Carrozzeria",
+          "🏨 Hotel", "🛏️ Bed & Breakfast", "🌾 Agriturismo",
+          "💪 Palestra", "🏊 Piscina", "🚦 Scuola Guida",
+          "🛒 Supermercato", "🔨 Ferramenta", "🌸 Fiorista", "🥖 Panificio"
+        ]
+      }
     },
     "cities": {
       "title": "Cities",
       "type": "array",
       "description": "Select one or more Italian cities to search in.",
       "editor": "select",
-      "items": { "type": "string" },
       "default": ["roma"],
       "prefill": ["roma"],
-      "enum": [
-        "roma", "milano", "napoli", "torino", "bologna",
-        "firenze", "palermo", "genova", "venezia", "bari",
-        "catania", "verona", "messina", "padova", "trieste",
-        "brescia", "taranto", "prato", "modena", "parma",
-        "livorno", "cagliari", "perugia", "foggia", "salerno",
-        "reggio-emilia", "ravenna", "ferrara", "monza", "trento",
-        "vicenza", "bergamo", "ancona", "siena", "pescara",
-        "arezzo", "lecce", "rimini", "reggio-calabria", "cesena"
-      ],
-      "enumTitles": [
-        "Roma", "Milano", "Napoli", "Torino", "Bologna",
-        "Firenze", "Palermo", "Genova", "Venezia", "Bari",
-        "Catania", "Verona", "Messina", "Padova", "Trieste",
-        "Brescia", "Taranto", "Prato", "Modena", "Parma",
-        "Livorno", "Cagliari", "Perugia", "Foggia", "Salerno",
-        "Reggio Emilia", "Ravenna", "Ferrara", "Monza", "Trento",
-        "Vicenza", "Bergamo", "Ancona", "Siena", "Pescara",
-        "Arezzo", "Lecce", "Rimini", "Reggio Calabria", "Cesena"
-      ]
+      "items": {
+        "type": "string",
+        "enum": [
+          "roma", "milano", "napoli", "torino", "bologna",
+          "firenze", "palermo", "genova", "venezia", "bari",
+          "catania", "verona", "messina", "padova", "trieste",
+          "brescia", "taranto", "prato", "modena", "parma",
+          "livorno", "cagliari", "perugia", "foggia", "salerno",
+          "reggio-emilia", "ravenna", "ferrara", "monza", "trento",
+          "vicenza", "bergamo", "ancona", "siena", "pescara",
+          "arezzo", "lecce", "rimini", "reggio-calabria", "cesena"
+        ],
+        "enumTitles": [
+          "Roma", "Milano", "Napoli", "Torino", "Bologna",
+          "Firenze", "Palermo", "Genova", "Venezia", "Bari",
+          "Catania", "Verona", "Messina", "Padova", "Trieste",
+          "Brescia", "Taranto", "Prato", "Modena", "Parma",
+          "Livorno", "Cagliari", "Perugia", "Foggia", "Salerno",
+          "Reggio Emilia", "Ravenna", "Ferrara", "Monza", "Trento",
+          "Vicenza", "Bergamo", "Ancona", "Siena", "Pescara",
+          "Arezzo", "Lecce", "Rimini", "Reggio Calabria", "Cesena"
+        ]
+      }
     },
     "maxResults": {
       "title": "Max Results per Search",
       "type": "integer",
-      "description": "Maximum listings per category+city combination. Large cities (Roma/Milano) can yield 500-2500+.",
+      "description": "Maximum listings per category+city combination. Large cities (Roma/Milano) can yield 500–2500+.",
       "default": 200,
       "minimum": 1,
       "maximum": 5000,
@@ -79,20 +83,20 @@
     "onlyWithPhone": {
       "title": "Only listings with phone number",
       "type": "boolean",
-      "description": "Filter out listings that don't have a phone number.",
+      "description": "Filter out listings without a phone number.",
       "default": false,
       "groupCaption": "Filters"
     },
     "onlyWithWebsite": {
       "title": "Only listings with website",
       "type": "boolean",
-      "description": "Filter out listings that don't have a website.",
+      "description": "Filter out listings without a website.",
       "default": false
     },
     "onlyWithEmail": {
       "title": "Only listings with email",
       "type": "boolean",
-      "description": "Filter out listings that don't have an email address.",
+      "description": "Filter out listings without an email address.",
       "default": false
     },
     "useApifyProxy": {
@@ -103,9 +107,9 @@
       "groupCaption": "Proxy"
     },
     "searches": {
-      "title": "Advanced: Custom Search Queries",
+      "title": "Advanced: Custom Queries",
       "type": "array",
-      "description": "Optional. Override categories+cities with a custom list of {what, where} pairs. Leave empty to use the dropdowns above.",
+      "description": "Optional. Provide custom [{\"what\":\"...\",\"where\":\"...\"}] pairs to override the dropdowns above.",
       "editor": "json",
       "default": []
     }
