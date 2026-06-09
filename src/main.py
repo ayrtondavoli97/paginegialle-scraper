@@ -59,8 +59,10 @@ async def main() -> None:
 
             # Delay between searches to avoid rate limiting (HTTP 202)
             if s_idx > 0:
-                # Longer delay after district-heavy searches to avoid 202 rate limit
-                await asyncio.sleep(8.0)
+                # 20s cooldown between searches to avoid 202 rate limit
+                # PagineGialle tracks by IP+session, fresh delay helps
+                Actor.log.info("Cooling down 20s between searches...")
+                await asyncio.sleep(20.0)
 
             Actor.log.info(f"▶ [{s_idx+1}/{len(searches)}] '{what}' in '{where}'")
             results = await scrape_search(
@@ -201,16 +203,19 @@ async def scrape_search(what, where, max_results,
 
             Actor.log.info(f"HTTP {resp.status_code} — {len(resp.text)} chars")
             if resp.status_code == 202:
-                Actor.log.warning(f"HTTP 202 rate limit — sleeping 15s and retrying")
-                await asyncio.sleep(15.0)
+                Actor.log.warning(f"HTTP 202 rate limit — sleeping 30s and retrying")
+                await asyncio.sleep(30.0)
                 try:
                     resp = await client.get(url)
                     Actor.log.info(f"Retry: HTTP {resp.status_code} — {len(resp.text)} chars")
                     if resp.status_code == 202:
-                        Actor.log.warning("Still 202 after retry — sleeping 30s more")
-                        await asyncio.sleep(30.0)
+                        Actor.log.warning("Still 202 — sleeping 60s more")
+                        await asyncio.sleep(60.0)
                         resp = await client.get(url)
                         Actor.log.info(f"Retry2: HTTP {resp.status_code}")
+                        if resp.status_code == 202:
+                            Actor.log.warning("Persistent 202 — skipping this search")
+                            break
                 except Exception as e:
                     Actor.log.error(f"Retry failed: {e}")
                     break
