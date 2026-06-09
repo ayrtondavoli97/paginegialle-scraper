@@ -1,13 +1,10 @@
-# Apify Actor - PagineGialle.it Scraper
-FROM apify/actor-python:3.12
+FROM apify/actor-node:22
 
 WORKDIR /usr/src/app
 
-# Copy and install dependencies
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY package*.json ./
+RUN npm install --omit=dev
 
-# Copy source code
 COPY . ./
 
-CMD ["python", "-m", "src"]
+CMD ["node", "src/main.js"]

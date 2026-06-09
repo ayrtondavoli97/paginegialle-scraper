@@ -2,52 +2,29 @@
   "actorSpecification": 1,
   "name": "paginegialle-scraper",
   "title": "PagineGialle.it — Italian Yellow Pages Business Scraper",
-  "description": "Extract business data from PagineGialle.it (Italy's #1 Yellow Pages directory). Get names, phones, emails, websites, addresses, GPS coordinates, ratings, and social links. Multi-city and multi-category support with automatic pagination.",
-  "version": "0.1",
+  "description": "Extract business data from PagineGialle.it. Names, phones, addresses, ratings, GPS. Multi-category and multi-city with automatic pagination and district sub-searches.",
+  "version": "0.2",
   "buildTag": "latest",
-  "environmentVariables": {},
   "dockerfile": "./Dockerfile",
   "readme": "./README.md",
   "input": "./input_schema.json",
   "storages": {
     "dataset": {
       "actorSpecification": 1,
-      "fields": {},
       "views": {
         "overview": {
           "title": "Business Listings",
           "transformation": {
-            "fields": [
-              "name",
-              "category",
-              "phone",
-              "email",
-              "website",
-              "address",
-              "city",
-              "province",
-              "postalCode",
-              "latitude",
-              "longitude",
-              "rating",
-              "reviewCount",
-              "facebook",
-              "instagram",
-              "searchWhat",
-              "searchWhere"
-            ]
+            "fields": ["name","category","phone","email","website","address","city","province","postalCode","latitude","longitude","rating","reviewCount","facebook","instagram","searchWhat","searchWhere","sourceUrl"]
           },
           "display": {
             "component": "table",
             "properties": {
-              "name": { "label": "Business Name", "format": "text" },
-              "category": { "label": "Category", "format": "text" },
-              "phone": { "label": "Phone", "format": "text" },
-              "email": { "label": "Email", "format": "text" },
-              "website": { "label": "Website", "format": "link" },
-              "address": { "label": "Address", "format": "text" },
-              "city": { "label": "City", "format": "text" },
-              "rating": { "label": "Rating", "format": "number" }
+              "name":    {"label": "Business Name", "format": "text"},
+              "phone":   {"label": "Phone",         "format": "text"},
+              "address": {"label": "Address",       "format": "text"},
+              "rating":  {"label": "Rating",        "format": "number"},
+              "website": {"label": "Website",       "format": "link"}
             }
           }
         }
