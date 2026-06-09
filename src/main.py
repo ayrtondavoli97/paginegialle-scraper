@@ -14,6 +14,7 @@ import re
 import json
 
 import httpx
+from curl_cffi.requests import AsyncSession as CurlSession
 from apify import Actor
 from .utils import clean_phone, clean_text
 
@@ -77,10 +78,8 @@ async def main() -> None:
 
             # Delay between searches to avoid rate limiting (HTTP 202)
             if s_idx > 0:
-                # 20s cooldown between searches to avoid 202 rate limit
-                # PagineGialle tracks by IP+session, fresh delay helps
-                Actor.log.info("Cooling down 20s between searches...")
-                await asyncio.sleep(20.0)
+                Actor.log.info("Cooling down 5s between searches...")
+                await asyncio.sleep(5.0)
 
             Actor.log.info(f"▶ [{s_idx+1}/{len(searches)}] '{what}' in '{where}'")
             results = await scrape_search(
@@ -205,8 +204,8 @@ async def scrape_search(what, where, max_results,
     page       = 1
     total_count = 0
 
-    async with httpx.AsyncClient(headers=get_headers(), follow_redirects=True,
-                                  timeout=httpx.Timeout(30.0)) as client:
+    # curl_cffi impersonates real Chrome TLS fingerprint - avoids bot detection
+    async with CurlSession(impersonate="chrome124") as client:
         while len(results) < max_results:
             url = f"{SEARCH_BASE.format(what=what_slug, where=where_slug)}"
             if page > 1:
@@ -221,18 +220,18 @@ async def scrape_search(what, where, max_results,
 
             Actor.log.info(f"HTTP {resp.status_code} — {len(resp.text)} chars")
             if resp.status_code == 202:
-                Actor.log.warning(f"HTTP 202 rate limit — sleeping 30s and retrying")
-                await asyncio.sleep(30.0)
+                Actor.log.warning(f"HTTP 202 — sleeping 10s and retrying")
+                await asyncio.sleep(10.0)
                 try:
-                    resp = await client.get(url)
+                    resp = await client.get(url, headers=get_headers())
                     Actor.log.info(f"Retry: HTTP {resp.status_code} — {len(resp.text)} chars")
                     if resp.status_code == 202:
-                        Actor.log.warning("Still 202 — sleeping 60s more")
-                        await asyncio.sleep(60.0)
-                        resp = await client.get(url)
+                        Actor.log.warning("Still 202 — sleeping 30s more")
+                        await asyncio.sleep(30.0)
+                        resp = await client.get(url, headers=get_headers())
                         Actor.log.info(f"Retry2: HTTP {resp.status_code}")
                         if resp.status_code == 202:
-                            Actor.log.warning("Persistent 202 — skipping this search")
+                            Actor.log.warning("Persistent 202 — skipping")
                             break
                 except Exception as e:
                     Actor.log.error(f"Retry failed: {e}")
