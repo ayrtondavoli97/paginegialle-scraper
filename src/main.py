@@ -126,6 +126,7 @@ async def scrape_search(what, where, max_results,
                     "mid_html_120k":   html[118000:123000] if len(html) > 120000 else html[-5000:],
                     "mid_html_150k":   html[148000:153000] if len(html) > 150000 else "",
                     "mid_html_200k":   html[198000:210000] if len(html) > 200000 else "",
+                    "mid_html_210k":   html[208000:225000] if len(html) > 210000 else "",
                     "mid_html_250k":   html[248000:260000] if len(html) > 250000 else "",
                 })
                 Actor.log.info("Debug info saved to KV")
@@ -158,9 +159,15 @@ async def scrape_search(what, where, max_results,
                 break
 
             # Check if there's a next page
-            if not has_next_page(html, page):
-                Actor.log.info("No more pages")
-                break
+            next_found = has_next_page(html, page)
+            Actor.log.info(f"has_next_page(page={page}): {next_found}")
+            if not next_found:
+                # Last check: if we got full page of results and total says more, force continue
+                if len(listings) >= 20 and total_count > len(results):
+                    Actor.log.info(f"Force continue: {len(results)} < total {total_count}")
+                else:
+                    Actor.log.info("No more pages")
+                    break
 
             page += 1
             await asyncio.sleep(1.0)
@@ -248,7 +255,7 @@ def parse_listings(html: str, what: str, where: str) -> list[dict]:
 
     for pos in name_positions:
         # Take 4KB before (to get image/outer tags) and 3KB after (contact info)
-        block = html[max(0, pos - 300):pos + 7000]
+        block = html[max(0, pos - 1500):pos + 10000]
         item = parse_search_itm_block(block, what, where)
         if item and item.get("name") and not is_section_header(item["name"]):
             listings.append(item)
