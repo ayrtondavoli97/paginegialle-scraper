@@ -96,12 +96,25 @@ async def scrape_districts(district_urls, what, where,
             Actor.log.info(f"District: {url.split('/')[-1][:50]}")
             try:
                 resp = await dist_client.get(url)
+
+                # Handle rate limiting
+                if resp.status_code == 202:
+                    Actor.log.warning(f"  202 rate limit — sleeping 20s")
+                    await asyncio.sleep(20.0)
+                    resp = await dist_client.get(url)
+                    if resp.status_code == 202:
+                        Actor.log.warning(f"  Still 202 — skipping district")
+                        continue
+
                 if resp.status_code != 200:
+                    Actor.log.warning(f"  HTTP {resp.status_code} — skipping")
                     continue
+
                 html = resp.text
                 card_positions = [m.start() for m in re.finditer(
                     r'class="search-itm[^"]*card-listing[^"]*"', html)]
                 if not card_positions:
+                    # No listings for this district — normal, skip quietly
                     continue
                 new_count = 0
                 for i, pos in enumerate(card_positions):
@@ -131,7 +144,7 @@ async def scrape_districts(district_urls, what, where,
                     if len(results) >= max_results:
                         break
                 Actor.log.info(f"  → {new_count} new listings")
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1.0)  # 1s between districts to avoid 202
             except Exception as e:
                 Actor.log.warning(f"District error: {e}")
                 continue
