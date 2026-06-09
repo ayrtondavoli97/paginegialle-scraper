@@ -57,12 +57,10 @@ async def main() -> None:
             Actor.log.error("Input 'searches' is empty.")
             return
 
+        # Apify internal proxy (10.x.x.x:8011) incompatible with httpx in LIMITED_PERMISSIONS.
+        # Both paginegialle.it and ssc.paginegialle.it work fine direct.
         proxy_url = None
-        if use_proxy:
-            proxy_cfg = await Actor.create_proxy_configuration(country_code=proxy_country)
-            proxy_url = await proxy_cfg.new_url()
-            p = urlparse(proxy_url)
-            Actor.log.info(f"Proxy: {p.scheme}://***@{p.hostname}:{p.port}")
+        Actor.log.info("Direct connection (no proxy)")
 
         kv          = await Actor.open_key_value_store()
         dataset     = await Actor.open_dataset()
@@ -137,12 +135,6 @@ async def scrape_search(what, where, max_results, proxy_url,
         html = await fetch(client, search_url, HEADERS_HTML,
                            kv=kv, kv_key=f"search_{what}_{where}")
 
-    if not html:
-        # Retry without proxy
-        Actor.log.warning("Search page failed with proxy, retrying direct")
-        async with make_client(None) as client:
-            html = await fetch(client, search_url, HEADERS_HTML,
-                               kv=kv, kv_key=f"search_{what}_{where}_direct")
 
     if not html:
         Actor.log.error("Could not load search page")
