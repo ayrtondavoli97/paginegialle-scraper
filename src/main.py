@@ -264,8 +264,10 @@ def parse_listings(html: str, what: str, where: str) -> list[dict]:
             r'class="[^"]*search-itm__rag[^"]*"', html)]
         Actor.log.info(f"search-itm__rag fallback: {len(card_positions)} found")
 
-    for pos in card_positions:
-        block = html[pos:pos + 12000]  # 12KB from card start = full card
+    # Extract each card as the slice between consecutive card anchors
+    for i, pos in enumerate(card_positions):
+        end = card_positions[i + 1] if i + 1 < len(card_positions) else pos + 15000
+        block = html[pos:end]
         item = parse_search_itm_block(block, what, where)
         if item and item.get("name") and not is_section_header(item["name"]):
             listings.append(item)
@@ -316,21 +318,25 @@ def parse_search_itm_block(block: str, what: str, where: str) -> dict | None:
     if not name:
         return None
 
-    # Source URL - paginegialle.it profile link (a.remove_blank_for_app)
+    # data-user UUID from card div (unique business ID)
+    user_m = re.search(r'data-user="([^"]+)"', block[:200])
+    data_user = user_m.group(1) if user_m else ""
+
+    # Source URL - paginegialle.it profile link
     src_m = re.search(
-        r'href="(https?://(?:www\.)?paginegialle\.it/[a-z0-9\-]+)"',
+        r'href="(https?://(?:www\.)?paginegialle\.it/[a-z0-9][a-z0-9\-]+)"',
         block
     )
     source_url = src_m.group(1) if src_m else ""
 
-    # Phone: class="search-itm__phone-item" (always in HTML, no JS needed)
-    phone_m = re.search(
-        r'class="[^"]*search-itm__phone-item[^"]*"[^>]*>\s*([0-9][^<]{5,20}?)\s*<',
-        block, re.IGNORECASE
+    # Phone: class="search-itm__phone-item" inside hidden shownum div
+    # Collect ALL phone numbers from this card
+    phone_items = re.findall(
+        r'class="[^"]*search-itm__phone-item[^"]*">\s*([0-9][\d\s]{6,14})<',
+        block
     )
-    phone = clean_phone(phone_m.group(1).strip()) if phone_m else clean_phone(get([
+    phone = clean_phone(phone_items[0]) if phone_items else clean_phone(get([
         r'href="tel:([^"]+)"',
-        r'class="[^"]*(?:phone|tel|telefono)[^"]*"[^>]*>(.*?)</',
     ]))
 
     # Address: class="search-itm__adr" contains full address text
@@ -377,12 +383,11 @@ def parse_search_itm_block(block: str, what: str, where: str) -> dict | None:
         img_m = re.search(r'src="(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', block, re.IGNORECASE)
     image = img_m.group(1) if img_m else ""
 
-    # ID from URL slug
-    if source_url:
+    # ID: prefer data-user UUID, fallback to URL slug
+    bid = data_user if data_user else ""
+    if not bid and source_url:
         slug_m = re.search(r'/([a-z0-9\-]+)$', source_url)
         bid = slug_m.group(1) if slug_m else ""
-    else:
-        bid = ""
 
     return {
         "id": bid, "name": name, "subtitle": "", "description": "",
