@@ -202,11 +202,13 @@ def has_next_page(html: str, current_page: int) -> bool:
 def parse_listings(html: str, what: str, where: str) -> list[dict]:
     """
     Parse business listings from PagineGialle search page HTML.
-    The listings use class="entry" divs within class="listing" container.
+    PagineGialle v7 uses class="search-itm__rag" for the business name h2.
+    Each card has class="search-itm__content" and class="search-itm__dx".
+    Cards start ~200KB into the 661KB page.
     """
     listings = []
 
-    # Strategy 1: JSON-LD structured data (most reliable)
+    # Strategy 1: JSON-LD (only present on detail pages, not listing pages)
     for m in re.finditer(
         r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>',
         html, re.DOTALL | re.IGNORECASE
@@ -221,43 +223,137 @@ def parse_listings(html: str, what: str, where: str) -> list[dict]:
                     listings.append(extract_jsonld_item(item, what, where))
         except Exception:
             pass
-
     if listings:
-        Actor.log.info(f"JSON-LD strategy: {len(listings)} items")
+        Actor.log.info(f"JSON-LD: {len(listings)} items")
         return listings
 
-    # Strategy 2: class="entry" divs (PagineGialle v7 listing cards)
-    entry_blocks = re.findall(
-        r'<(?:div|li|article)[^>]+class="[^"]*\bentry\b[^"]*"[^>]*>(.*?)</(?:div|li|article)>',
-        html, re.DOTALL | re.IGNORECASE
-    )
-    if not entry_blocks:
-        # Try wider pattern
-        entry_blocks = re.findall(
-            r'<(?:div|li|article)[^>]+class="[^"]*(?:entry|result-item|listing-item|company-card)[^"]*"[^>]*>(.*?)</(?:div|li|article)>',
-            html, re.DOTALL | re.IGNORECASE
-        )
+    # Strategy 2: PagineGialle v7 search-itm cards
+    # Each card contains class="search-itm__content" with all business data
+    # Anchor on "search-itm__rag" (the h2 name element) and extract a ~4KB window
+    # then parse address/phone/etc from the surrounding context.
 
-    Actor.log.info(f"entry blocks found: {len(entry_blocks)}")
-    for block in entry_blocks:
-        item = parse_entry_block(block, what, where)
+    # Find all h2 names with search-itm__rag class
+    name_positions = [m.start() for m in re.finditer(r'class="[^"]*search-itm__rag[^"]*"', html)]
+    Actor.log.info(f"search-itm__rag positions: {len(name_positions)} found")
+
+    for pos in name_positions:
+        # Take 4KB before (to get image/outer tags) and 3KB after (contact info)
+        block = html[max(0, pos - 500):pos + 3500]
+        item = parse_search_itm_block(block, what, where)
         if item and item.get("name") and not is_section_header(item["name"]):
             listings.append(item)
 
     if listings:
         return listings
 
-    # Strategy 3: microformat hCard
-    vcard_blocks = re.findall(
-        r'<(?:div|li|article)[^>]+class="[^"]*\bvcard\b[^"]*"[^>]*>(.*?)</(?:div|li|article)>',
-        html, re.DOTALL | re.IGNORECASE
-    )
-    for block in vcard_blocks:
-        item = parse_entry_block(block, what, where)
-        if item and item.get("name") and not is_section_header(item["name"]):
-            listings.append(item)
+    # Strategy 3: broader class search fallback
+    for pat in [
+        r'class="[^"]*search-itm[^"]*"',
+        r'data-tr="listing-search-itm-rag"',
+        r'class="[^"]*entry[^"]*"',
+        r'class="[^"]*vcard[^"]*"',
+    ]:
+        positions = [m.start() for m in re.finditer(pat, html, re.IGNORECASE)]
+        if positions:
+            Actor.log.info(f"Fallback pattern '{pat}': {len(positions)} hits")
+            for pos in positions[:50]:
+                block = html[max(0, pos - 200):pos + 3000]
+                item = parse_search_itm_block(block, what, where)
+                if item and item.get("name") and not is_section_header(item["name"]):
+                    listings.append(item)
+            if listings:
+                break
 
     return listings
+
+
+def parse_search_itm_block(block: str, what: str, where: str) -> dict | None:
+    """Parse a PagineGialle v7 search-itm card block."""
+
+    def get(patterns):
+        for p in patterns:
+            m = re.search(p, block, re.DOTALL | re.IGNORECASE)
+            if m:
+                raw = m.group(1)
+                # Remove inner spans/icons, keep text
+                raw = re.sub(r'<span class="icon[^"]*"[^>]*>.*?</span>', '', raw, flags=re.DOTALL)
+                return clean_text(re.sub(r"<[^>]+>", "", raw))
+        return ""
+
+    # Name from search-itm__rag h2
+    name = get([
+        r'class="[^"]*search-itm__rag[^"]*"[^>]*>\s*(.*?)\s*</h[123]>',
+        r'data-tr="listing-search-itm-rag"[^>]*>\s*(.*?)\s*</h[123]>',
+        r'<h2[^>]*class="[^"]*search-itm[^"]*"[^>]*>(.*?)</h2>',
+    ])
+    if not name:
+        return None
+
+    # Source URL - paginegialle.it profile link
+    src_m = re.search(
+        r'href="(https?://(?:www\.)?paginegialle\.it/[^"?]+)"',
+        block[:2000]
+    )
+    source_url = src_m.group(1) if src_m else ""
+
+    # Phone
+    phone = clean_phone(get([
+        r'href="tel:([^"]+)"',
+        r'class="[^"]*(?:tel|phone|telefono)[^"]*"[^>]*>(.*?)</',
+        r'data-tr="[^"]*phone[^"]*"[^>]*>(.*?)</',
+    ]))
+
+    # Address
+    address = get([
+        r'class="[^"]*(?:address|indirizzo|adr|street)[^"]*"[^>]*>(.*?)</',
+        r'itemprop="streetAddress"[^>]*>(.*?)</',
+        r'data-tr="[^"]*address[^"]*"[^>]*>(.*?)</',
+    ])
+
+    # Category / tipo
+    category = get([
+        r'class="[^"]*(?:category|categoria|type|tipo)[^"]*"[^>]*>(.*?)</',
+        r'data-tr="listing-search-itm-lbl"[^>]*>.*?<span>(.*?)</span>',
+    ]) or what
+
+    # Rating
+    rating_m = re.search(r'itemprop="ratingValue"[^>]*content="([^"]+)"', block)
+    if not rating_m:
+        rating_m = re.search(r'rating-stars--([0-9]+)', block)
+        if rating_m:
+            # rating-stars--75 means 3.75 stars (out of 5, base 100)
+            val = int(rating_m.group(1))
+            rating = round(val / 20, 1) if val > 10 else None
+        else:
+            rating = None
+    else:
+        try: rating = float(rating_m.group(1))
+        except: rating = None
+
+    # Image
+    img_m = re.search(r'src="(https?://wips\.plug\.it[^"]+)"', block)
+    if not img_m:
+        img_m = re.search(r'src="(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"', block, re.IGNORECASE)
+    image = img_m.group(1) if img_m else ""
+
+    # ID from URL slug
+    if source_url:
+        slug_m = re.search(r'/([a-z0-9\-]+)$', source_url)
+        bid = slug_m.group(1) if slug_m else ""
+    else:
+        bid = ""
+
+    return {
+        "id": bid, "name": name, "subtitle": "", "description": "",
+        "category": category, "phone": phone, "email": "",
+        "website": "", "address": address, "city": where,
+        "province": "", "postalCode": "",
+        "latitude": None, "longitude": None,
+        "rating": rating, "reviewCount": None,
+        "image": image, "facebook": "", "instagram": "",
+        "searchWhat": what, "searchWhere": where,
+        "sourceUrl": source_url,
+    }
 
 
 def is_section_header(name: str) -> bool:
