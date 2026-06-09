@@ -8,8 +8,18 @@
       "type": "array",
       "description": "List of searches. Each needs 'what' (category) and 'where' (city).",
       "editor": "json",
-      "default": [{"what": "ristoranti", "where": "napoli"}],
-      "prefill": [{"what": "ristoranti", "where": "napoli"}]
+      "default": [
+        {
+          "what": "ristoranti",
+          "where": "napoli"
+        }
+      ],
+      "prefill": [
+        {
+          "what": "ristoranti",
+          "where": "napoli"
+        }
+      ]
     },
     "maxResults": {
       "title": "Max Results per Search",
@@ -22,17 +32,20 @@
     "onlyWithPhone": {
       "title": "Only listings with phone",
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "Filter out listings without a phone number."
     },
     "onlyWithWebsite": {
       "title": "Only listings with website",
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "Filter out listings without a website."
     },
     "onlyWithEmail": {
       "title": "Only listings with email",
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "Filter out listings without an email address."
     },
     "useApifyProxy": {
       "title": "Use Apify Proxy (recommended)",
@@ -44,9 +57,26 @@
       "title": "Proxy Country",
       "type": "string",
       "default": "IT",
-      "enum": ["IT","DE","FR","ES","GB","US"],
-      "enumTitles": ["Italy","Germany","France","Spain","UK","US"]
+      "enum": [
+        "IT",
+        "DE",
+        "FR",
+        "ES",
+        "GB",
+        "US"
+      ],
+      "enumTitles": [
+        "Italy",
+        "Germany",
+        "France",
+        "Spain",
+        "UK",
+        "US"
+      ],
+      "description": "Country code for residential proxy. IT recommended for Italian sites."
     }
   },
-  "required": ["searches"]
+  "required": [
+    "searches"
+  ]
 }
