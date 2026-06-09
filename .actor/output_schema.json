@@ -8,8 +8,7 @@
       "title": "Business Listings",
       "type": "string",
       "description": "Default dataset containing extracted Italian business listings. Use the Apify dataset export buttons to download JSON, CSV, Excel, XML, RSS or HTML.",
-      "resourceType": "dataset",
-      "template": "{{actorRun.defaultDatasetUrl}}"
+      "template": "{{links.apiDefaultDatasetUrl}}/items"
     }
   }
 }
