@@ -1,0 +1,77 @@
+{
+  "title": "PagineGialle Scraper Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "searches": {
+      "title": "Search Queries",
+      "type": "array",
+      "description": "List of searches to perform. Each item needs a 'what' (category) and 'where' (city/province).",
+      "editor": "json",
+      "default": [
+        { "what": "ristoranti", "where": "napoli" },
+        { "what": "avvocati", "where": "milano" }
+      ],
+      "prefill": [
+        { "what": "ristoranti", "where": "napoli" }
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "what": {
+            "type": "string",
+            "title": "Category / Business Type",
+            "description": "What to search for (e.g. ristoranti, avvocati, idraulici)"
+          },
+          "where": {
+            "type": "string",
+            "title": "City / Province",
+            "description": "Where to search (e.g. napoli, milano, roma)"
+          }
+        },
+        "required": ["what", "where"]
+      }
+    },
+    "maxResults": {
+      "title": "Max Results per Search",
+      "type": "integer",
+      "description": "Maximum number of listings to extract per search query.",
+      "default": 200,
+      "minimum": 1,
+      "maximum": 5000
+    },
+    "onlyWithPhone": {
+      "title": "Only listings with phone number",
+      "type": "boolean",
+      "description": "Filter out listings that don't have a phone number.",
+      "default": false
+    },
+    "onlyWithWebsite": {
+      "title": "Only listings with website",
+      "type": "boolean",
+      "description": "Filter out listings that don't have a website.",
+      "default": false
+    },
+    "onlyWithEmail": {
+      "title": "Only listings with email",
+      "type": "boolean",
+      "description": "Filter out listings that don't have an email address.",
+      "default": false
+    },
+    "useApifyProxy": {
+      "title": "Use Apify Proxy",
+      "type": "boolean",
+      "description": "Use Apify residential proxies to avoid blocks. Strongly recommended.",
+      "default": true
+    },
+    "proxyCountry": {
+      "title": "Proxy Country",
+      "type": "string",
+      "description": "Country code for proxy. Use IT for Italian residential IPs.",
+      "default": "IT",
+      "enum": ["IT", "DE", "FR", "ES", "GB", "US"],
+      "enumTitles": ["Italy", "Germany", "France", "Spain", "United Kingdom", "United States"]
+    }
+  },
+  "required": ["searches"]
+}
