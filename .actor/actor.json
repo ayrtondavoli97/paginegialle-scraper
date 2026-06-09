@@ -16,29 +16,70 @@
           "title": "Business Listings",
           "transformation": {
             "fields": [
-              "name", "category", "phone", "email", "website",
-              "address", "city", "province", "postalCode",
-              "latitude", "longitude", "rating", "reviewCount",
-              "facebook", "instagram", "profileUrl",
-              "searchCategory", "searchCity"
+              "name",
+              "category",
+              "phone",
+              "email",
+              "website",
+              "address",
+              "city",
+              "province",
+              "postalCode",
+              "latitude",
+              "longitude",
+              "rating",
+              "reviewCount",
+              "facebook",
+              "instagram",
+              "profileUrl",
+              "searchCategory",
+              "searchCity"
             ]
           },
           "display": {
             "component": "table",
             "properties": {
-              "name":           { "label": "Business Name",   "format": "text" },
-              "category":       { "label": "Category",        "format": "text" },
-              "phone":          { "label": "Phone",           "format": "text" },
-              "address":        { "label": "Address",         "format": "text" },
-              "city":           { "label": "City",            "format": "text" },
-              "rating":         { "label": "Rating",          "format": "number" },
-              "profileUrl":     { "label": "Profile URL",     "format": "link" },
-              "searchCategory": { "label": "Search Category", "format": "text" },
-              "searchCity":     { "label": "Search City",     "format": "text" }
+              "name": {
+                "label": "Business Name",
+                "format": "text"
+              },
+              "category": {
+                "label": "Category",
+                "format": "text"
+              },
+              "phone": {
+                "label": "Phone",
+                "format": "text"
+              },
+              "address": {
+                "label": "Address",
+                "format": "text"
+              },
+              "city": {
+                "label": "City",
+                "format": "text"
+              },
+              "rating": {
+                "label": "Rating",
+                "format": "number"
+              },
+              "profileUrl": {
+                "label": "Profile URL",
+                "format": "link"
+              },
+              "searchCategory": {
+                "label": "Search Category",
+                "format": "text"
+              },
+              "searchCity": {
+                "label": "Search City",
+                "format": "text"
+              }
             }
           }
         }
       }
     }
-  }
+  },
+  "output": "./output_schema.json"
 }

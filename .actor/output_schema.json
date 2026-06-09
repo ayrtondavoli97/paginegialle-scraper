@@ -1,0 +1,85 @@
+{
+  "actorSpecification": 1,
+  "fields": {
+    "id": {
+      "type": "string",
+      "description": "Unique business identifier (UUID from PagineGialle internal database)"
+    },
+    "name": {
+      "type": "string",
+      "description": "Business name"
+    },
+    "category": {
+      "type": "string",
+      "description": "Business category as listed on PagineGialle (e.g. Ristorante, Dentista)"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Primary phone number. Available for ~70-99% of listings depending on category."
+    },
+    "email": {
+      "type": "string",
+      "description": "Email address. Rarely available in listing pages (use Enricher actor for full coverage)."
+    },
+    "website": {
+      "type": "string",
+      "description": "Website URL. Rarely available in listing pages (use Enricher actor for full coverage)."
+    },
+    "address": {
+      "type": "string",
+      "description": "Full street address including ZIP code and city, e.g. 'Via Roma, 1 - 00100 Roma (RM)'"
+    },
+    "city": {
+      "type": "string",
+      "description": "City name as searched"
+    },
+    "province": {
+      "type": "string",
+      "description": "Italian province code (e.g. RM, MI, NA). Currently empty — use address field."
+    },
+    "postalCode": {
+      "type": "string",
+      "description": "ZIP / Postal code. Currently empty — included in address field."
+    },
+    "latitude": {
+      "type": "number",
+      "description": "GPS latitude. Available via Enricher actor."
+    },
+    "longitude": {
+      "type": "number",
+      "description": "GPS longitude. Available via Enricher actor."
+    },
+    "rating": {
+      "type": "number",
+      "description": "Average customer rating (0.0–5.0). Only present for businesses with at least one review (~10–40%)."
+    },
+    "reviewCount": {
+      "type": "integer",
+      "description": "Number of customer reviews. Available via Enricher actor."
+    },
+    "imageUrl": {
+      "type": "string",
+      "description": "Business photo URL (when available)."
+    },
+    "facebook": {
+      "type": "string",
+      "description": "Facebook page URL. Available via Enricher actor."
+    },
+    "instagram": {
+      "type": "string",
+      "description": "Instagram profile URL. Available via Enricher actor."
+    },
+    "profileUrl": {
+      "type": "string",
+      "description": "Full URL to the business profile on PagineGialle.it (e.g. https://www.paginegialle.it/ristoranteroma)"
+    },
+    "searchCategory": {
+      "type": "string",
+      "description": "The category used in the search query that returned this listing"
+    },
+    "searchCity": {
+      "type": "string",
+      "description": "The city used in the search query that returned this listing"
+    }
+  }
+}
