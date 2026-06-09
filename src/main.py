@@ -83,56 +83,59 @@ async def main() -> None:
 
 
 
+async def fetch_district(client: httpx.AsyncClient, url: str,
+                         what: str, where: str, semaphore: asyncio.Semaphore) -> list[dict]:
+    """Fetch and parse a single district page. Uses semaphore for concurrency control."""
+    async with semaphore:
+        try:
+            resp = await client.get(url)
+            if resp.status_code == 202:
+                # Rate limited: wait and retry once
+                await asyncio.sleep(5.0)
+                resp = await client.get(url)
+            if resp.status_code != 200:
+                return []
+            html = resp.text
+            return parse_listings(html, what, where)
+        except Exception as e:
+            Actor.log.debug(f"District fetch error ({url.split('/')[-1][:30]}): {e}")
+            return []
+
+
 async def scrape_districts(district_urls, what, where,
                            max_results, seen_ids,
                            only_with_phone, only_with_website, only_with_email):
-    """Scrape listings from district sub-pages to bypass the 25-result city limit."""
+    """
+    Scrape district sub-pages concurrently in batches.
+    Batch size 8 with 1.5s between batches = ~20s for 100 districts vs 200s sequential.
+    """
     results = []
+    BATCH_SIZE = 8
+    BATCH_DELAY = 1.5  # seconds between batches
+
+    # Semaphore limits concurrent connections
+    semaphore = asyncio.Semaphore(BATCH_SIZE)
+
     async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True,
-                                 timeout=httpx.Timeout(30.0)) as dist_client:
-        for url in district_urls:
+                                 timeout=httpx.Timeout(20.0),
+                                 limits=httpx.Limits(max_connections=10)) as client:
+
+        batches = [district_urls[i:i+BATCH_SIZE] for i in range(0, len(district_urls), BATCH_SIZE)]
+        Actor.log.info(f"Districts: {len(district_urls)} URLs → {len(batches)} batches of {BATCH_SIZE}")
+
+        for b_idx, batch in enumerate(batches):
             if len(results) >= max_results:
                 break
-            Actor.log.info(f"District: {url.split('/')[-1][:50]}")
-            try:
-                resp = await dist_client.get(url)
 
-                # Handle 202 rate limit with exponential backoff
-                if resp.status_code == 202:
-                    Actor.log.warning(f"  202 rate limit — sleeping 45s for cooldown")
-                    await asyncio.sleep(45.0)
-                    resp = await dist_client.get(url)
-                    if resp.status_code == 202:
-                        Actor.log.warning(f"  Still 202 after cooldown — sleeping 60s more")
-                        await asyncio.sleep(60.0)
-                        resp = await dist_client.get(url)
-                        if resp.status_code == 202:
-                            Actor.log.warning(f"  Persistent 202 — skipping district")
-                            continue
+            # Fetch all URLs in this batch concurrently
+            tasks = [fetch_district(client, url, what, where, semaphore) for url in batch]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                if resp.status_code != 200:
-                    Actor.log.warning(f"  HTTP {resp.status_code} — skipping")
+            new_this_batch = 0
+            for listings in batch_results:
+                if isinstance(listings, Exception) or not listings:
                     continue
-
-                html = resp.text
-                card_positions = [m.start() for m in re.finditer(
-                    r'class="search-itm[^"]*card-listing[^"]*"', html)]
-                if not card_positions:
-                    continue
-                new_count = 0
-                for i, pos in enumerate(card_positions):
-                    # Find real tag start
-                    tag_start = pos
-                    for offset in range(1, 200):
-                        c = html[pos - offset]
-                        if c == '<':
-                            tag_start = pos - offset
-                            break
-                        if c == '>' and offset > 1:
-                            break
-                    end_pos = card_positions[i+1] if i+1 < len(card_positions) else pos + 15000
-                    block = html[tag_start:end_pos]
-                    item = parse_search_itm_block(block, what, where)
+                for item in listings:
                     if not item or not item.get("name") or is_section_header(item["name"]):
                         continue
                     uid = item.get("id") or item.get("name","").lower().strip()
@@ -143,14 +146,21 @@ async def scrape_districts(district_urls, what, where,
                     if only_with_website and not item.get("website"): continue
                     if only_with_email   and not item.get("email"):   continue
                     results.append(item)
-                    new_count += 1
+                    new_this_batch += 1
                     if len(results) >= max_results:
                         break
-                Actor.log.info(f"  → {new_count} new listings")
-                await asyncio.sleep(2.0)  # 2s between districts to avoid 202
-            except Exception as e:
-                Actor.log.warning(f"District error: {e}")
-                continue
+                if len(results) >= max_results:
+                    break
+
+            Actor.log.info(
+                f"Batch {b_idx+1}/{len(batches)}: +{new_this_batch} new | "
+                f"total {len(results)}/{max_results}"
+            )
+
+            # Short delay between batches to stay under rate limit
+            if b_idx < len(batches) - 1:
+                await asyncio.sleep(BATCH_DELAY)
+
     return results
 
 
