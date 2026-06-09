@@ -159,7 +159,7 @@ for (let si = 0; si < searches.length; si++) {
                 }
                 console.log(`  Page ${lbl === 'P1' ? 1 : 2}: ${newCount} new`);
 
-                if (lbl === 'P2' && newCount === 0) {
+                if (lbl === 'P1' && page1Html) {
                     districtUrls = extractDistrictUrls(page1Html, whatSlug, whereSlug);
                     console.log(`  Districts: ${districtUrls.length} found`);
                 }
@@ -199,7 +199,7 @@ for (let si = 0; si < searches.length; si++) {
                         if (!seenIds.has(uid)) { seenIds.add(uid); results.push(item); newCount++; }
                     }
                     console.log(`  Direct page ${lbl === 'P1' ? 1 : 2}: ${newCount} new`);
-                    if (lbl === 'P2' && newCount === 0) {
+                    if (lbl === 'P1' && page1Html) {
                         districtUrls = extractDistrictUrls(page1Html, whatSlug, whereSlug);
                         console.log(`  Direct districts: ${districtUrls.length}`);
                     }
