@@ -128,11 +128,23 @@ function parseListings(html, what, where) {
 await Actor.init();
 
 const input = await Actor.getInput() ?? {};
-const searches   = input.searches   ?? [];
 const maxResults = input.maxResults ?? 200;
 const useProxy   = input.useApifyProxy !== false;
 
-if (!searches.length) { console.error('Empty searches'); await Actor.exit(); }
+// Build searches from categories × cities dropdowns, or use custom searches array
+let searches = input.searches ?? [];
+if (searches.length === 0) {
+    const categories = input.categories ?? ['ristorante'];
+    const cities     = input.cities     ?? ['roma'];
+    for (const what of categories) {
+        for (const where of cities) {
+            searches.push({ what, where });
+        }
+    }
+    console.log(`Built ${searches.length} searches from ${categories.length} categories × ${cities.length} cities`);
+}
+
+if (!searches.length) { console.error('No searches defined'); await Actor.exit(); }
 
 let proxyConfiguration;
 if (useProxy) {
