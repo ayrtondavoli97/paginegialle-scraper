@@ -81,5 +81,6 @@
       "type": "string",
       "description": "The city used in the search query that returned this listing"
     }
-  }
+  },
+  "actorOutputSchemaVersion": 1
 }
