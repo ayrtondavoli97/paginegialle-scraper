@@ -1,25 +1,15 @@
 {
   "actorOutputSchemaVersion": 1,
   "title": "PagineGialle Scraper Output",
-  "description": "Italian business listings extracted from PagineGialle.it",
+  "description": "Italian business listings extracted from PagineGialle.it.",
+  "type": "object",
   "properties": {
     "results": {
       "title": "Business Listings",
       "type": "string",
-      "description": "Full dataset of extracted Italian business listings",
-      "template": "{{links.apiDefaultDatasetUrl}}/items?format=json"
-    },
-    "resultsCSV": {
-      "title": "Download CSV",
-      "type": "string",
-      "description": "Download all results as CSV",
-      "template": "{{links.apiDefaultDatasetUrl}}/items?format=csv"
-    },
-    "resultsXLSX": {
-      "title": "Download Excel",
-      "type": "string",
-      "description": "Download all results as Excel",
-      "template": "{{links.apiDefaultDatasetUrl}}/items?format=xlsx"
+      "description": "Default dataset containing extracted Italian business listings. Use the Apify dataset export buttons to download JSON, CSV, Excel, XML, RSS or HTML.",
+      "resourceType": "dataset",
+      "template": "{{actorRun.defaultDatasetUrl}}"
     }
   }
 }
