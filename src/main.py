@@ -100,8 +100,17 @@ async def scrape_districts(district_urls, what, where,
                     continue
                 new_count = 0
                 for i, pos in enumerate(card_positions):
+                    # Find real tag start
+                    tag_start = pos
+                    for offset in range(1, 200):
+                        c = html[pos - offset]
+                        if c == '<':
+                            tag_start = pos - offset
+                            break
+                        if c == '>' and offset > 1:
+                            break
                     end_pos = card_positions[i+1] if i+1 < len(card_positions) else pos + 15000
-                    block = html[pos:end_pos]
+                    block = html[tag_start:end_pos]
                     item = parse_search_itm_block(block, what, where)
                     if not item or not item.get("name") or is_section_header(item["name"]):
                         continue
@@ -353,9 +362,19 @@ def parse_listings(html: str, what: str, where: str) -> list[dict]:
         Actor.log.info(f"search-itm__rag fallback: {len(card_positions)} found")
 
     # Extract each card as the slice between consecutive card anchors
+    # Go back up to 200 chars to find the real opening tag (before class= attribute)
     for i, pos in enumerate(card_positions):
+        # Find the actual tag start (<div, <li, <article) before the class= pos
+        tag_start = pos
+        for offset in range(1, 200):
+            c = html[pos - offset]
+            if c == '<':
+                tag_start = pos - offset
+                break
+            if c == '>' and offset > 1:  # hit previous tag end, stop
+                break
         end = card_positions[i + 1] if i + 1 < len(card_positions) else pos + 15000
-        block = html[pos:end]
+        block = html[tag_start:end]
         item = parse_search_itm_block(block, what, where)
         if item and item.get("name") and not is_section_header(item["name"]):
             listings.append(item)
