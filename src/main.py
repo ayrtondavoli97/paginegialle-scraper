@@ -212,7 +212,6 @@ async def scrape_search(what, where, max_results,
                     if district_urls:
                         district_results = await scrape_districts(
                             district_urls=district_urls,
-                            client=client,
                             what=what, where=where,
                             max_results=max_results - len(results),
                             seen_ids=seen_ids,
@@ -257,15 +256,26 @@ def normalize_slug(text: str) -> str:
 
 def extract_districts(html: str, what_slug: str, where_slug: str) -> list[str]:
     """
-    Extract district/zone search URLs from the PagineGialle district-search box.
-    These are the chip links like "Napoli Quartiere Chiaia" that allow drilling
-    into sub-areas to bypass the 25-result limit per city.
+    Extract real geographic sub-area URLs from the PagineGialle district chip box.
+    Filters out filter URLs (?f=...) and keeps only actual location variants.
     """
-    # Pattern: <a class="chip" href="https://www.paginegialle.it/ricerca/ristoranti/Napoli Quartiere Chiaia"
     pattern = rf'href="(https://www\.paginegialle\.it/ricerca/{re.escape(what_slug)}/[^"]+)"' 
-    urls = list(dict.fromkeys(re.findall(pattern, html, re.IGNORECASE)))
-    Actor.log.info(f"District URLs found: {len(urls)}")
-    return urls[:50]  # cap at 50 districts
+    all_urls = list(dict.fromkeys(re.findall(pattern, html, re.IGNORECASE)))
+
+    # Keep only URLs that are location-based (no ?f= query params, no fragments)
+    # and represent a different sub-location (not the base city URL)
+    base = f"https://www.paginegialle.it/ricerca/{what_slug}/{where_slug}"
+    district_urls = []
+    for url in all_urls:
+        # Skip filter URLs (?f=), the base city URL, and any with query strings
+        if "?" in url or "#" in url:
+            continue
+        if url.rstrip("/").lower() == base.rstrip("/").lower():
+            continue
+        district_urls.append(url)
+
+    Actor.log.info(f"District URLs: {len(all_urls)} found, {len(district_urls)} location-based")
+    return district_urls[:60]
 
 
 def extract_total_count(html: str) -> int:
@@ -394,28 +404,24 @@ def parse_search_itm_block(block: str, what: str, where: str) -> dict | None:
     if not name:
         return None
 
-    # data-user UUID from card div opening tag (within first 500 chars)
-    user_m = re.search(r'data-user="([^"]+)"', block[:500])
-    data_user = user_m.group(1) if user_m else ""
+    # data-user UUID from card opening tag
+    user_m = re.search(r'data-user="([0-9a-fA-F\-]{30,})"|data-user="([^"]+)"', block[:600])
+    data_user = (user_m.group(1) or user_m.group(2)) if user_m else ""
 
     # Source URL - paginegialle.it profile link
-    # Multiple patterns: direct href or remove_blank_for_app anchor
-    src_m = re.search(
-        r'href="(https://(?:www\.)?paginegialle\.it/[a-z0-9][a-z0-9\-/]+)"',
+    # e.g. https://www.paginegialle.it/emozioninapoli or /ristorante-napoli
+    SKIP_PATHS = ("/mappa/","/profilo/","/ricerca/","/static/","/servizi/",
+                  "/shop/","/news/","/scheda/","/autocomplete/","/services/")
+    source_url = ""
+    for m in re.finditer(
+        r'href="(https?://(?:www\.)?paginegialle\.it/([a-z0-9][^"?#\s]{1,80}))"',
         block
-    )
-    if src_m:
-        source_url = src_m.group(1)
-        # Skip generic URLs (mappa, profilo, ricerca, static, etc.)
-        if any(x in source_url for x in ["/mappa/","/profilo/","/ricerca/","/static/",
-                                           "/servizi/","/shop/","/news/"]):
-            src_m2 = re.search(
-                r'class="[^"]*remove_blank_for_app[^"]*"[^>]*href="(https?://[^"]+paginegialle[^"]+)"',
-                block
-            )
-            source_url = src_m2.group(1) if src_m2 else ""
-    else:
-        source_url = ""
+    ):
+        url_candidate = m.group(1)
+        path = m.group(2)
+        if not any(path.startswith(s.lstrip("/")) or s in url_candidate for s in SKIP_PATHS):
+            source_url = url_candidate
+            break
 
     # Phone: class="search-itm__phone-item" inside hidden shownum div
     # Collect ALL phone numbers from this card
