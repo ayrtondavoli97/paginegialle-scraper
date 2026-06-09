@@ -136,10 +136,11 @@ for (let si = 0; si < searches.length; si++) {
     let districtUrls = [];
     let page1Html    = '';
 
-    // ── Step 1: page 1 + 2 ────────────────────────────────────────────────
+    // ── Step 1: page 1 + 2 (with direct fallback if proxy gives 0) ─────────
+    let proxyForStep1 = proxyConfiguration;
     await new Promise(resolve => {
         const crawler = new HttpCrawler({
-            proxyConfiguration,
+            proxyConfiguration: proxyForStep1,
             maxConcurrency: 2,
             async requestHandler({ body, request }) {
                 const html = body.toString();
@@ -175,6 +176,44 @@ for (let si = 0; si < searches.length; si++) {
             { url: buildUrl(what, where, 2), label: 'P2', uniqueKey: `p2-${what}-${where}` },
         ]).then(resolve);
     });
+
+    // If proxy gave 0 results, retry step1 without proxy (direct connection)
+    if (results.length === 0 && proxyConfiguration) {
+        console.log(`  Proxy gave 0 results — retrying direct...`);
+        page1Html = '';
+        districtUrls = [];
+        await new Promise(resolve => {
+            const crawler = new HttpCrawler({
+                maxConcurrency: 2,
+                async requestHandler({ body, request }) {
+                    const html = body.toString();
+                    const lbl  = request.label;
+                    if (lbl === 'P1') {
+                        page1Html = html;
+                        console.log(`  Direct total: ${extractTotalCount(html)}`);
+                    }
+                    const listings = parseListings(html, what, where);
+                    let newCount = 0;
+                    for (const item of listings) {
+                        const uid = item.id || item.name.toLowerCase();
+                        if (!seenIds.has(uid)) { seenIds.add(uid); results.push(item); newCount++; }
+                    }
+                    console.log(`  Direct page ${lbl === 'P1' ? 1 : 2}: ${newCount} new`);
+                    if (lbl === 'P2' && newCount === 0) {
+                        districtUrls = extractDistrictUrls(page1Html, whatSlug, whereSlug);
+                        console.log(`  Direct districts: ${districtUrls.length}`);
+                    }
+                },
+                failedRequestHandler({ request, error }) {
+                    console.warn(`  Direct failed: ${error.message}`);
+                },
+            });
+            crawler.run([
+                { url: buildUrl(what, where, 1), label: 'P1', uniqueKey: `dp1-${what}-${where}` },
+                { url: buildUrl(what, where, 2), label: 'P2', uniqueKey: `dp2-${what}-${where}` },
+            ]).then(resolve);
+        });
+    }
 
     // ── Step 2: districts (concurrent, proxy rotates IPs) ─────────────────
     if (districtUrls.length > 0 && results.length < maxResults) {
