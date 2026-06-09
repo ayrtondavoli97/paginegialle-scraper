@@ -77,6 +77,51 @@ async def main() -> None:
         Actor.log.info(f"Done. Total: {total_saved}")
 
 
+
+async def scrape_districts(district_urls, client, what, where,
+                           max_results, seen_ids,
+                           only_with_phone, only_with_website, only_with_email):
+    """Scrape listings from district sub-pages to bypass the 25-result city limit."""
+    results = []
+    for url in district_urls:
+        if len(results) >= max_results:
+            break
+        Actor.log.info(f"District: {url.split('/')[-1][:50]}")
+        try:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                continue
+            html = resp.text
+            card_positions = [m.start() for m in re.finditer(
+                r'class="search-itm[^"]*card-listing[^"]*"', html)]
+            if not card_positions:
+                continue
+            new_count = 0
+            for i, pos in enumerate(card_positions):
+                end = card_positions[i+1] if i+1 < len(card_positions) else pos + 15000
+                block = html[pos:end]
+                item = parse_search_itm_block(block, what, where)
+                if not item or not item.get("name") or is_section_header(item["name"]):
+                    continue
+                uid = item.get("id") or item.get("name","").lower().strip()
+                if uid in seen_ids:
+                    continue
+                seen_ids.add(uid)
+                if only_with_phone   and not item.get("phone"):   continue
+                if only_with_website and not item.get("website"): continue
+                if only_with_email   and not item.get("email"):   continue
+                results.append(item)
+                new_count += 1
+                if len(results) >= max_results:
+                    break
+            Actor.log.info(f"  → {new_count} new listings")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            Actor.log.warning(f"District error: {e}")
+            continue
+    return results
+
+
 async def scrape_search(what, where, max_results,
                         only_with_phone, only_with_website, only_with_email, kv):
 
@@ -109,6 +154,7 @@ async def scrape_search(what, where, max_results,
 
             # On page 1: extract total count and save debug info
             if page == 1:
+                page1_html = html  # Save for district extraction
                 total_count = extract_total_count(html)
                 Actor.log.info(f"Total count: {total_count}")
 
@@ -159,7 +205,24 @@ async def scrape_search(what, where, max_results,
 
             Actor.log.info(f"Page {page}: {new_this_page} new, {len(listings)-new_this_page} dupes | total {len(results)}/{max_results}")
             if new_this_page == 0:
-                Actor.log.info("All listings on this page are duplicates — stopping")
+                if page == 2:
+                    # PagineGialle repeats page 1 on page 2+ — switch to district mode
+                    Actor.log.info("Page 2 all dupes → switching to district sub-searches")
+                    district_urls = extract_districts(page1_html, what_slug, where_slug)
+                    if district_urls:
+                        district_results = await scrape_districts(
+                            district_urls=district_urls,
+                            client=client,
+                            what=what, where=where,
+                            max_results=max_results - len(results),
+                            seen_ids=seen_ids,
+                            only_with_phone=only_with_phone,
+                            only_with_website=only_with_website,
+                            only_with_email=only_with_email,
+                        )
+                        results.extend(district_results)
+                        Actor.log.info(f"Districts added {len(district_results)} results")
+                Actor.log.info("Stopping main pagination")
                 break
             if len(results) >= max_results:
                 break
@@ -190,6 +253,19 @@ def normalize_slug(text: str) -> str:
         for c in src: text = text.replace(c, dst)
     text = re.sub(r"[^a-z0-9\-]", "", text)
     return re.sub(r"-+", "-", text).strip("-")
+
+
+def extract_districts(html: str, what_slug: str, where_slug: str) -> list[str]:
+    """
+    Extract district/zone search URLs from the PagineGialle district-search box.
+    These are the chip links like "Napoli Quartiere Chiaia" that allow drilling
+    into sub-areas to bypass the 25-result limit per city.
+    """
+    # Pattern: <a class="chip" href="https://www.paginegialle.it/ricerca/ristoranti/Napoli Quartiere Chiaia"
+    pattern = rf'href="(https://www\.paginegialle\.it/ricerca/{re.escape(what_slug)}/[^"]+)"' 
+    urls = list(dict.fromkeys(re.findall(pattern, html, re.IGNORECASE)))
+    Actor.log.info(f"District URLs found: {len(urls)}")
+    return urls[:50]  # cap at 50 districts
 
 
 def extract_total_count(html: str) -> int:
@@ -318,16 +394,28 @@ def parse_search_itm_block(block: str, what: str, where: str) -> dict | None:
     if not name:
         return None
 
-    # data-user UUID from card div (unique business ID)
-    user_m = re.search(r'data-user="([^"]+)"', block[:200])
+    # data-user UUID from card div opening tag (within first 500 chars)
+    user_m = re.search(r'data-user="([^"]+)"', block[:500])
     data_user = user_m.group(1) if user_m else ""
 
     # Source URL - paginegialle.it profile link
+    # Multiple patterns: direct href or remove_blank_for_app anchor
     src_m = re.search(
-        r'href="(https?://(?:www\.)?paginegialle\.it/[a-z0-9][a-z0-9\-]+)"',
+        r'href="(https://(?:www\.)?paginegialle\.it/[a-z0-9][a-z0-9\-/]+)"',
         block
     )
-    source_url = src_m.group(1) if src_m else ""
+    if src_m:
+        source_url = src_m.group(1)
+        # Skip generic URLs (mappa, profilo, ricerca, static, etc.)
+        if any(x in source_url for x in ["/mappa/","/profilo/","/ricerca/","/static/",
+                                           "/servizi/","/shop/","/news/"]):
+            src_m2 = re.search(
+                r'class="[^"]*remove_blank_for_app[^"]*"[^>]*href="(https?://[^"]+paginegialle[^"]+)"',
+                block
+            )
+            source_url = src_m2.group(1) if src_m2 else ""
+    else:
+        source_url = ""
 
     # Phone: class="search-itm__phone-item" inside hidden shownum div
     # Collect ALL phone numbers from this card
