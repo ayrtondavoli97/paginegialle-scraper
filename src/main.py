@@ -97,14 +97,18 @@ async def scrape_districts(district_urls, what, where,
             try:
                 resp = await dist_client.get(url)
 
-                # Handle rate limiting
+                # Handle 202 rate limit with exponential backoff
                 if resp.status_code == 202:
-                    Actor.log.warning(f"  202 rate limit — sleeping 20s")
-                    await asyncio.sleep(20.0)
+                    Actor.log.warning(f"  202 rate limit — sleeping 45s for cooldown")
+                    await asyncio.sleep(45.0)
                     resp = await dist_client.get(url)
                     if resp.status_code == 202:
-                        Actor.log.warning(f"  Still 202 — skipping district")
-                        continue
+                        Actor.log.warning(f"  Still 202 after cooldown — sleeping 60s more")
+                        await asyncio.sleep(60.0)
+                        resp = await dist_client.get(url)
+                        if resp.status_code == 202:
+                            Actor.log.warning(f"  Persistent 202 — skipping district")
+                            continue
 
                 if resp.status_code != 200:
                     Actor.log.warning(f"  HTTP {resp.status_code} — skipping")
@@ -114,7 +118,6 @@ async def scrape_districts(district_urls, what, where,
                 card_positions = [m.start() for m in re.finditer(
                     r'class="search-itm[^"]*card-listing[^"]*"', html)]
                 if not card_positions:
-                    # No listings for this district — normal, skip quietly
                     continue
                 new_count = 0
                 for i, pos in enumerate(card_positions):
@@ -144,7 +147,7 @@ async def scrape_districts(district_urls, what, where,
                     if len(results) >= max_results:
                         break
                 Actor.log.info(f"  → {new_count} new listings")
-                await asyncio.sleep(1.0)  # 1s between districts to avoid 202
+                await asyncio.sleep(2.0)  # 2s between districts to avoid 202
             except Exception as e:
                 Actor.log.warning(f"District error: {e}")
                 continue
