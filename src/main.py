@@ -128,65 +128,66 @@ async def scrape_search(what, where, max_results, proxy_url,
     where_slug = normalize_slug(where)
     search_url = SEARCH_BASE.format(what=what_slug, where=where_slug)
 
-    # ── Step 1: load search page, extract API URL ─────────────────────────
-    Actor.log.info(f"Step 1: loading search page {search_url}")
+    # ── Single shared client — cookies from step1 carry into step2/3 ──────
+    async with make_client(None) as client:
 
-    async with make_client(proxy_url) as client:
+        # Step 1: load search page → get feOptions with API URL + cookies
+        Actor.log.info(f"Step 1: {search_url}")
         html = await fetch(client, search_url, HEADERS_HTML,
                            kv=kv, kv_key=f"search_{what}_{where}")
+        if not html:
+            Actor.log.error("Search page failed")
+            return []
 
+        # Log cookies received from step1
+        cookies = dict(client.cookies)
+        Actor.log.info(f"Session cookies after step1: {list(cookies.keys())}")
 
-    if not html:
-        Actor.log.error("Could not load search page")
-        return []
+        # Step 2: extract internal API URL
+        api_url = extract_api_url(html)
+        if not api_url:
+            Actor.log.error("shiny_pgimp_src not found in HTML")
+            await kv.set_value(f"debug_{what}_{where}", {
+                "msg": "shiny_pgimp_src not found",
+                "html_head": html[:2000],
+            })
+            return []
 
-    # ── Step 2: extract API URL from feOptions.shiny_pgimp_src ───────────
-    api_url = extract_api_url(html)
-    if not api_url:
-        Actor.log.error("Could not find API URL (shiny_pgimp_src) in page HTML")
-        await kv.set_value(f"debug_{what}_{where}", {
-            "msg": "shiny_pgimp_src not found",
-            "html_snippet": html[:2000],
-        })
-        return []
+        total_count = int(get_param(api_url, "QTA") or "0")
+        results_per = int(get_param(api_url, "NADV") or "25")
+        total_pages = min(
+            math.ceil(total_count / results_per),
+            math.ceil(max_results / results_per),
+        ) if total_count > 0 else 10
 
-    Actor.log.info(f"Step 2: found API URL, QTA={get_param(api_url, 'QTA')} PAGINA={get_param(api_url, 'PAGINA')}")
+        Actor.log.info(f"Step 2: API found — QTA={total_count} NADV={results_per} → {total_pages} pages")
 
-    total_count  = int(get_param(api_url, "QTA") or "0")
-    results_per  = int(get_param(api_url, "NADV") or "25")
-    total_pages  = min(
-        math.ceil(total_count / results_per),
-        math.ceil(max_results / results_per),
-    ) if total_count > 0 else 10
+        # Small delay so the server sees a realistic browsing pattern
+        await asyncio.sleep(0.5)
 
-    Actor.log.info(f"Total: ~{total_count} results → {total_pages} pages")
-
-    # ── Step 3: paginate API ──────────────────────────────────────────────
-    async with make_client(proxy_url) as client:
+        # Step 3: paginate API with same session
         for page in range(1, total_pages + 1):
             paged_url = set_pagination(api_url, page, results_per)
-            Actor.log.info(f"API page {page}/{total_pages}: {paged_url[:100]}...")
+            Actor.log.info(f"API page {page}/{total_pages}: {paged_url[:120]}...")
 
             api_html = await fetch(client, paged_url, HEADERS_API,
-                                   kv=kv if page == 1 else None,
-                                   kv_key=f"api_{what}_{where}_p1")
-
+                                   kv=kv, kv_key=f"api_{what}_{where}_p{page}" if page <= 2 else "")
             if not api_html:
-                Actor.log.warning(f"Page {page} failed, stopping")
+                Actor.log.warning(f"Page {page} empty/failed, stopping")
                 break
-
-            listings = parse_api_html(api_html, what, where)
-            Actor.log.info(f"Page {page}: parsed {len(listings)} listings")
 
             if page == 1:
                 await kv.set_value(f"parse_{what}_{where}", {
-                    "page1_listings": len(listings),
-                    "total_count": total_count,
-                    "api_html_snippet": api_html[:1000],
+                    "api_html_len":  len(api_html),
+                    "api_html_head": api_html[:1500],
+                    "total_count":   total_count,
                 })
 
+            listings = parse_api_html(api_html, what, where)
+            Actor.log.info(f"Page {page}: {len(listings)} listings parsed")
+
             if not listings:
-                Actor.log.info("Empty page, stopping")
+                Actor.log.info("No listings on page, stopping")
                 break
 
             for item in listings:
