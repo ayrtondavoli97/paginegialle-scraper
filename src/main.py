@@ -46,7 +46,25 @@ async def main() -> None:
             Actor.log.error("Input 'searches' is empty.")
             return
 
-        Actor.log.info("Direct connection (no proxy)")
+        import os
+
+        # Setup Apify proxy for IP rotation (avoids rate limiting)
+        if inp.get("useApifyProxy", True):
+            try:
+                proxy_cfg = await Actor.create_proxy_configuration(
+                    country_code=inp.get("proxyCountry", "IT")
+                )
+                proxy_url = await proxy_cfg.new_url()
+                os.environ["APIFY_PROXY_URL"] = proxy_url
+                from urllib.parse import urlparse as _up
+                _p = _up(proxy_url)
+                Actor.log.info(f"Proxy: ***@{_p.hostname}:{_p.port} (IP rotation)")
+            except Exception as e:
+                Actor.log.warning(f"Proxy failed ({e}) — direct connection")
+                os.environ.pop("APIFY_PROXY_URL", None)
+        else:
+            os.environ.pop("APIFY_PROXY_URL", None)
+            Actor.log.info("Direct connection (no proxy)")
         kv          = await Actor.open_key_value_store()
         dataset     = await Actor.open_dataset()
         total_saved = 0
@@ -92,8 +110,8 @@ async def fetch_district(client: httpx.AsyncClient, url: str,
         try:
             resp = await client.get(url)
             if resp.status_code == 202:
-                # Rate limited: wait and retry once
-                await asyncio.sleep(5.0)
+                # Rate limited: brief wait and retry
+                await asyncio.sleep(2.0)
                 resp = await client.get(url)
             if resp.status_code != 200:
                 return []
@@ -119,8 +137,16 @@ async def scrape_districts(district_urls, what, where,
     # Semaphore limits concurrent connections
     semaphore = asyncio.Semaphore(BATCH_SIZE)
 
+    import os
+    proxy_url = os.environ.get("APIFY_PROXY_URL")
+    if proxy_url:
+        transport = httpx.AsyncHTTPTransport(proxy=proxy_url)
+    else:
+        transport = None
+
     async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True,
                                  timeout=httpx.Timeout(20.0),
+                                 transport=transport,
                                  limits=httpx.Limits(max_connections=10)) as client:
 
         batches = [district_urls[i:i+BATCH_SIZE] for i in range(0, len(district_urls), BATCH_SIZE)]
@@ -187,8 +213,18 @@ async def scrape_search(what, where, max_results,
     page       = 1
     total_count = 0
 
+    # Use Apify proxy if available (rotates IPs to avoid rate limiting)
+    import os
+    proxy_url = os.environ.get("APIFY_PROXY_URL")
+    if proxy_url:
+        Actor.log.info(f"Using Apify proxy for IP rotation")
+        transport = httpx.AsyncHTTPTransport(proxy=proxy_url)
+    else:
+        transport = None
+
     async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True,
-                                  timeout=httpx.Timeout(30.0)) as client:
+                                  timeout=httpx.Timeout(30.0),
+                                  transport=transport) as client:
         while len(results) < max_results:
             url = f"{SEARCH_BASE.format(what=what_slug, where=where_slug)}"
             if page > 1:
