@@ -2,7 +2,7 @@
   "actorSpecification": 1,
   "name": "paginegialle-scraper",
   "title": "PagineGialle.it — Italian Yellow Pages Business Scraper",
-  "description": "Extract business data from PagineGialle.it. Names, phones, addresses, ratings, GPS. Multi-category and multi-city with automatic pagination and district sub-searches.",
+  "description": "Extract business leads from PagineGialle.it — Italy's #1 business directory. Get names, phones, addresses, ratings and profile URLs. Select categories and cities from dropdowns. No coding needed.",
   "version": "0.2",
   "buildTag": "latest",
   "dockerfile": "./Dockerfile",
@@ -15,16 +15,26 @@
         "overview": {
           "title": "Business Listings",
           "transformation": {
-            "fields": ["name","category","phone","email","website","address","city","province","postalCode","latitude","longitude","rating","reviewCount","facebook","instagram","searchWhat","searchWhere","sourceUrl"]
+            "fields": [
+              "name", "category", "phone", "email", "website",
+              "address", "city", "province", "postalCode",
+              "latitude", "longitude", "rating", "reviewCount",
+              "facebook", "instagram", "profileUrl",
+              "searchCategory", "searchCity"
+            ]
           },
           "display": {
             "component": "table",
             "properties": {
-              "name":    {"label": "Business Name", "format": "text"},
-              "phone":   {"label": "Phone",         "format": "text"},
-              "address": {"label": "Address",       "format": "text"},
-              "rating":  {"label": "Rating",        "format": "number"},
-              "website": {"label": "Website",       "format": "link"}
+              "name":           { "label": "Business Name",   "format": "text" },
+              "category":       { "label": "Category",        "format": "text" },
+              "phone":          { "label": "Phone",           "format": "text" },
+              "address":        { "label": "Address",         "format": "text" },
+              "city":           { "label": "City",            "format": "text" },
+              "rating":         { "label": "Rating",          "format": "number" },
+              "profileUrl":     { "label": "Profile URL",     "format": "link" },
+              "searchCategory": { "label": "Search Category", "format": "text" },
+              "searchCity":     { "label": "Search City",     "format": "text" }
             }
           }
         }

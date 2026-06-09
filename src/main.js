@@ -112,12 +112,26 @@ function parseListings(html, what, where) {
         const image = $c.find('img[src]').first().attr('src') || '';
 
         listings.push({
-            id, name, subtitle: '', description: '',
-            category, phone: phones[0] || '', email: '', website: '',
-            address, city: where, province: '', postalCode: '',
-            latitude: null, longitude: null, rating, reviewCount: null,
-            image, facebook: '', instagram: '',
-            searchWhat: what, searchWhere: where, sourceUrl,
+            id,
+            name,
+            category,
+            phone:          phones[0] || '',
+            email:          '',
+            website:        '',
+            address,
+            city:           where,
+            province:       '',
+            postalCode:     '',
+            latitude:       null,
+            longitude:      null,
+            rating,
+            reviewCount:    null,
+            imageUrl:       image,
+            facebook:       '',
+            instagram:      '',
+            profileUrl:     sourceUrl,
+            searchCategory: what,
+            searchCity:     where,
         });
     });
 

@@ -1,10 +1,10 @@
 {
-  "title": "PagineGialle Scraper Input",
+  "title": "PagineGialle.it — Italian Yellow Pages Scraper",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
     "categories": {
-      "title": "Categories",
+      "title": "Business Categories",
       "type": "array",
       "description": "Select one or more business categories to search for.",
       "editor": "select",
@@ -26,17 +26,17 @@
           "supermercato", "ferramenta", "fiorista", "panificio"
         ],
         "enumTitles": [
-          "🍽️ Ristorante", "🍕 Pizzeria", "☕ Bar / Caffè", "🎂 Pasticceria", "🍦 Gelateria",
-          "🍷 Trattoria", "🍾 Enoteca", "🍱 Sushi",
-          "🦷 Dentista", "👨‍⚕️ Medico", "💊 Farmacia", "💇 Parrucchiere", "💅 Estetista",
-          "🏃 Fisioterapista", "🧠 Psicologo", "👓 Ottico", "🐾 Veterinario",
-          "⚖️ Avvocato", "📊 Commercialista", "📜 Notaio", "📐 Architetto", "📏 Geometra",
-          "🏠 Agenzia Immobiliare", "🛡️ Agenzia Assicurativa",
-          "🔧 Idraulico", "⚡ Elettricista", "🪵 Falegname", "🧱 Muratore",
-          "🏗️ Impresa Edile", "🔩 Officina Meccanica", "🚗 Carrozzeria",
-          "🏨 Hotel", "🛏️ Bed & Breakfast", "🌾 Agriturismo",
-          "💪 Palestra", "🏊 Piscina", "🚦 Scuola Guida",
-          "🛒 Supermercato", "🔨 Ferramenta", "🌸 Fiorista", "🥖 Panificio"
+          "🍽️ Restaurant", "🍕 Pizzeria", "☕ Bar / Café", "🎂 Pastry Shop", "🍦 Ice Cream Shop",
+          "🍷 Trattoria", "🍾 Wine Bar", "🍱 Sushi",
+          "🦷 Dentist", "👨‍⚕️ Doctor / GP", "💊 Pharmacy", "💇 Hair Salon", "💅 Beauty Salon",
+          "🏃 Physiotherapist", "🧠 Psychologist", "👓 Optician", "🐾 Veterinarian",
+          "⚖️ Lawyer", "📊 Accountant", "📜 Notary", "📐 Architect", "📏 Surveyor",
+          "🏠 Real Estate Agency", "🛡️ Insurance Agency",
+          "🔧 Plumber", "⚡ Electrician", "🪵 Carpenter", "🧱 Builder / Mason",
+          "🏗️ Construction Company", "🔩 Auto Repair Shop", "🚗 Body Shop",
+          "🏨 Hotel", "🛏️ Bed & Breakfast", "🌾 Farm Stay (Agriturismo)",
+          "💪 Gym / Fitness", "🏊 Swimming Pool", "🚦 Driving School",
+          "🛒 Supermarket", "🔨 Hardware Store", "🌸 Florist", "🥖 Bakery"
         ]
       }
     },
@@ -60,9 +60,9 @@
           "arezzo", "lecce", "rimini", "reggio-calabria", "cesena"
         ],
         "enumTitles": [
-          "Roma", "Milano", "Napoli", "Torino", "Bologna",
-          "Firenze", "Palermo", "Genova", "Venezia", "Bari",
-          "Catania", "Verona", "Messina", "Padova", "Trieste",
+          "Rome", "Milan", "Naples", "Turin", "Bologna",
+          "Florence", "Palermo", "Genoa", "Venice", "Bari",
+          "Catania", "Verona", "Messina", "Padua", "Trieste",
           "Brescia", "Taranto", "Prato", "Modena", "Parma",
           "Livorno", "Cagliari", "Perugia", "Foggia", "Salerno",
           "Reggio Emilia", "Ravenna", "Ferrara", "Monza", "Trento",
@@ -71,10 +71,24 @@
         ]
       }
     },
+    "customCategories": {
+      "title": "Custom Categories (not in dropdown)",
+      "type": "array",
+      "description": "Add any category not listed above, one per line (e.g. 'tatuaggi', 'pompe-funebri', 'erboristeria'). Combined with all selected cities.",
+      "editor": "stringList",
+      "default": []
+    },
+    "customCities": {
+      "title": "Custom Cities (not in dropdown)",
+      "type": "array",
+      "description": "Add any Italian city not listed above, one per line (e.g. 'barletta', 'cosenza', 'agrigento'). Combined with all selected categories.",
+      "editor": "stringList",
+      "default": []
+    },
     "maxResults": {
       "title": "Max Results per Search",
       "type": "integer",
-      "description": "Maximum listings per category+city combination. Large cities (Roma/Milano) can yield 500–2500+.",
+      "description": "Maximum listings per category+city combination. Large cities (Rome/Milan) can yield 500–2500+ results per category.",
       "default": 200,
       "minimum": 1,
       "maximum": 5000,
@@ -83,33 +97,33 @@
     "onlyWithPhone": {
       "title": "Only listings with phone number",
       "type": "boolean",
-      "description": "Filter out listings without a phone number.",
+      "description": "Skip listings that don't have a phone number.",
       "default": false,
-      "groupCaption": "Filters"
+      "groupCaption": "Output Filters"
     },
     "onlyWithWebsite": {
       "title": "Only listings with website",
       "type": "boolean",
-      "description": "Filter out listings without a website.",
+      "description": "Skip listings that don't have a website URL.",
       "default": false
     },
     "onlyWithEmail": {
       "title": "Only listings with email",
       "type": "boolean",
-      "description": "Filter out listings without an email address.",
+      "description": "Skip listings that don't have an email address.",
       "default": false
     },
     "useApifyProxy": {
       "title": "Use Apify Proxy (recommended)",
       "type": "boolean",
-      "description": "Use Apify datacenter proxies for IP rotation. Recommended for multi-search runs.",
+      "description": "Use Apify datacenter proxies for IP rotation. Strongly recommended for multi-city/multi-category runs.",
       "default": true,
-      "groupCaption": "Proxy"
+      "groupCaption": "Proxy Settings"
     },
     "searches": {
-      "title": "Advanced: Custom Queries",
+      "title": "Advanced: Raw Search Queries",
       "type": "array",
-      "description": "Optional. Provide custom [{\"what\":\"...\",\"where\":\"...\"}] pairs to override the dropdowns above.",
+      "description": "Expert mode: provide a custom JSON array of {\"what\": \"...\", \"where\": \"...\"} objects. When set, this overrides all dropdown selections above.",
       "editor": "json",
       "default": []
     }
