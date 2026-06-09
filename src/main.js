@@ -5,7 +5,7 @@ import * as cheerio from 'cheerio';
 const BASE_URL = 'https://www.paginegialle.it';
 
 
-// PagineGialle category slug aliases (plural → singular form used by the site)
+// PagineGialle category slug aliases (plural -> singular form used by the site)
 const SLUG_ALIASES = {
     'avvocati':            'avvocato',
     'idraulici':           'idraulico',
@@ -26,28 +26,42 @@ const SLUG_ALIASES = {
 };
 
 function normalizeSlug(text) {
-    return text.toLowerCase().trim()
+    return String(text || '').toLowerCase().trim()
         .replace(/[\s_/]+/g, '-')
         .replace(/[àáâãäå]/g, 'a').replace(/[èéêë]/g, 'e')
         .replace(/[ìíîï]/g, 'i').replace(/[òóôõö]/g, 'o').replace(/[ùúûü]/g, 'u')
         .replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
 
+function resolveWhatSlug(what) {
+    const raw = String(what || '').toLowerCase().trim();
+    const normalized = normalizeSlug(what);
+    return SLUG_ALIASES[raw] ?? SLUG_ALIASES[normalized] ?? normalized;
+}
+
 function buildUrl(what, where, page = 1) {
-    // Apply alias (avvocati→avvocato, idraulici→idraulico, etc.)
-    const resolved = SLUG_ALIASES[what.toLowerCase()] ?? SLUG_ALIASES[normalizeSlug(what)] ?? normalizeSlug(what);
+    // Apply alias (avvocati -> avvocato, idraulici -> idraulico, etc.)
+    const resolved = resolveWhatSlug(what);
     const base = `${BASE_URL}/ricerca/${resolved}/${normalizeSlug(where)}`;
     return page > 1 ? `${base}?pg=${page}` : base;
 }
 
+function absoluteUrl(url) {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    if (url.startsWith('//')) return `https:${url}`;
+    if (url.startsWith('/')) return `${BASE_URL}${url}`;
+    return url;
+}
+
 function cleanText(str) {
     if (!str) return '';
-    return str.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    return String(str).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function cleanPhone(str) {
     if (!str) return '';
-    return str.replace(/[^\d\s+()-]/g, '').trim();
+    return String(str).replace(/[^\d\s+()-]/g, '').trim();
 }
 
 function extractTotalCount(html) {
@@ -61,7 +75,7 @@ function extractDistrictUrls(html, whatSlug, whereSlug) {
     const base = `${BASE_URL}/ricerca/${whatSlug}/`;
     const baseCity = `${base}${whereSlug}`.toLowerCase();
     $('a.chip').each((_, el) => {
-        const href = $(el).attr('href') || '';
+        const href = absoluteUrl($(el).attr('href') || '');
         if (href.startsWith(base) && !href.includes('?') && !href.includes('#')
             && href.toLowerCase() !== baseCity) {
             urls.add(href);
@@ -73,7 +87,15 @@ function extractDistrictUrls(html, whatSlug, whereSlug) {
 const BADGE_WORDS = new Set(['suggerito','consigliato','sponsor','in evidenza','verificato','aperto','chiuso']);
 const SKIP_WORDS = ['più di','risultati fuori','ricerche correlate','risultati per','annunci correlati'];
 
-function parseListings(html, what, where) {
+function makeDedupeKey(item) {
+    if (item.id) return `id:${item.id}`;
+    return [item.name, item.address, item.phone, item.searchCity]
+        .map(v => cleanText(v).toLowerCase())
+        .filter(Boolean)
+        .join('|');
+}
+
+function parseListings(html, what, where, searchUrl = '', scrapedAt = '') {
     const $ = cheerio.load(html);
     const listings = [];
 
@@ -87,7 +109,7 @@ function parseListings(html, what, where) {
 
         let sourceUrl = '';
         $c.find('a[href]').each((_, a) => {
-            const h = $(a).attr('href') || '';
+            const h = absoluteUrl($(a).attr('href') || '');
             if (h.includes('paginegialle.it/') && !/\/(mappa|profilo|ricerca|static|servizi|shop|news|scheda)\//.test(h)) {
                 sourceUrl = h; return false;
             }
@@ -110,15 +132,32 @@ function parseListings(html, what, where) {
         const lbl = cleanText($c.find('[class*="search-itm__label"]').first().text());
         if (lbl && !BADGE_WORDS.has(lbl.toLowerCase())) category = lbl;
 
-        const image = $c.find('img[src]').first().attr('src') || '';
+        const image = absoluteUrl($c.find('img[src]').first().attr('src') || '');
+
+        let email = '';
+        let website = '';
+        $c.find('a[href]').each((_, a) => {
+            const href = $(a).attr('href') || '';
+            const absoluteHref = absoluteUrl(href);
+            if (!email && href.startsWith('mailto:')) {
+                email = href.replace(/^mailto:/i, '').split('?')[0].trim();
+            }
+            if (!website && absoluteHref.startsWith('http')
+                && !absoluteHref.includes('paginegialle.it')
+                && !absoluteHref.includes('google.')
+                && !absoluteHref.includes('facebook.com')
+                && !absoluteHref.includes('instagram.com')) {
+                website = absoluteHref;
+            }
+        });
 
         listings.push({
             id,
             name,
             category,
             phone:          phones[0] || '',
-            email:          '',
-            website:        '',
+            email,
+            website,
             address,
             city:           where,
             province:       '',
@@ -133,20 +172,27 @@ function parseListings(html, what, where) {
             profileUrl:     sourceUrl,
             searchCategory: what,
             searchCity:     where,
+            searchUrl,
+            source:         'paginegialle.it',
+            scrapedAt,
         });
     });
 
     return listings;
 }
 
-// ── Main ────────────────────────────────────────────────────────────────────
+// -- Main --------------------------------------------------------------------
 await Actor.init();
 
 const input = await Actor.getInput() ?? {};
 const maxResults = input.maxResults ?? 200;
 const useProxy   = input.useApifyProxy !== false;
+const onlyWithPhone = input.onlyWithPhone === true;
+const onlyWithWebsite = input.onlyWithWebsite === true;
+const onlyWithEmail = input.onlyWithEmail === true;
+const runStartedAt = new Date().toISOString();
 
-// Build searches from categories × cities dropdowns, or use custom searches array
+// Build searches from categories x cities dropdowns, or use custom searches array
 const manualSearches = (input.searches ?? []).filter(s => s.what && s.where);
 let searches = [];
 
@@ -159,9 +205,9 @@ if (manualSearches.length === 0) {
             searches.push({ what, where });
         }
     }
-    console.log(`Built ${searches.length} searches from ${cats.length} categories × ${cityArr.length} cities`);
+    console.log(`Built ${searches.length} searches from ${cats.length} categories x ${cityArr.length} cities`);
 } else {
-    // Use manual searches from Advanced field — apply alias map too
+    // Use manual searches from Advanced field; aliases still apply while building URLs.
     searches = manualSearches;
     console.log(`Using ${searches.length} manual search queries`);
 }
@@ -171,7 +217,7 @@ if (!searches.length) { console.error('No searches defined'); await Actor.exit()
 let proxyConfiguration;
 if (useProxy) {
     proxyConfiguration = await Actor.createProxyConfiguration();
-    console.log('✔ Proxy configured (datacenter/residential)');
+    console.log('Proxy configured');
 } else {
     console.log('Direct connection');
 }
@@ -183,16 +229,16 @@ for (let si = 0; si < searches.length; si++) {
     const { what, where } = searches[si];
     if (!what || !where) continue;
 
-    console.log(`\n▶ [${si+1}/${searches.length}] '${what}' in '${where}'`);
+    console.log(`\n[${si+1}/${searches.length}] '${what}' in '${where}'`);
 
-    const whatSlug  = normalizeSlug(what);
+    const whatSlug  = resolveWhatSlug(what);
     const whereSlug = normalizeSlug(where);
     const results   = [];
     const seenIds   = new Set();
     let districtUrls = [];
     let page1Html    = '';
 
-    // ── Step 1: page 1 + 2 (with direct fallback if proxy gives 0) ─────────
+    // Step 1: page 1 + 2 (with direct fallback if proxy gives 0)
     let proxyForStep1 = proxyConfiguration;
     await new Promise(resolve => {
         const crawler = new HttpCrawler({
@@ -207,11 +253,11 @@ for (let si = 0; si < searches.length; si++) {
                     console.log(`  Total count: ${extractTotalCount(html)}`);
                 }
 
-                const listings = parseListings(html, what, where);
+                const listings = parseListings(html, what, where, request.url, runStartedAt);
                 let newCount = 0;
                 for (const item of listings) {
-                    const uid = item.id || item.name.toLowerCase();
-                    if (!seenIds.has(uid)) { seenIds.add(uid); results.push(item); newCount++; }
+                    const uid = makeDedupeKey(item);
+                    if (uid && !seenIds.has(uid)) { seenIds.add(uid); results.push(item); newCount++; }
                 }
                 console.log(`  Page ${lbl === 'P1' ? 1 : 2}: ${newCount} new`);
 
@@ -221,7 +267,7 @@ for (let si = 0; si < searches.length; si++) {
                 }
             },
             failedRequestHandler({ request, error }) {
-                console.warn(`  Failed: ${request.url} — ${error.message}`);
+                console.warn(`  Failed: ${request.url} - ${error.message}`);
                 if (request.label === 'P2') {
                     districtUrls = extractDistrictUrls(page1Html, whatSlug, whereSlug);
                 }
@@ -235,7 +281,7 @@ for (let si = 0; si < searches.length; si++) {
 
     // If proxy gave 0 results, retry step1 without proxy (direct connection)
     if (results.length === 0 && proxyConfiguration) {
-        console.log(`  Proxy gave 0 results — retrying direct...`);
+        console.log(`  Proxy gave 0 results - retrying direct...`);
         page1Html = '';
         districtUrls = [];
         await new Promise(resolve => {
@@ -248,11 +294,11 @@ for (let si = 0; si < searches.length; si++) {
                         page1Html = html;
                         console.log(`  Direct total: ${extractTotalCount(html)}`);
                     }
-                    const listings = parseListings(html, what, where);
+                    const listings = parseListings(html, what, where, request.url, runStartedAt);
                     let newCount = 0;
                     for (const item of listings) {
-                        const uid = item.id || item.name.toLowerCase();
-                        if (!seenIds.has(uid)) { seenIds.add(uid); results.push(item); newCount++; }
+                        const uid = makeDedupeKey(item);
+                        if (uid && !seenIds.has(uid)) { seenIds.add(uid); results.push(item); newCount++; }
                     }
                     console.log(`  Direct page ${lbl === 'P1' ? 1 : 2}: ${newCount} new`);
                     if (lbl === 'P1' && page1Html) {
@@ -261,7 +307,7 @@ for (let si = 0; si < searches.length; si++) {
                     }
                 },
                 failedRequestHandler({ request, error }) {
-                    console.warn(`  Direct failed: ${error.message}`);
+                    console.warn(`  Direct failed: ${request.url} - ${error.message}`);
                 },
             });
             crawler.run([
@@ -271,7 +317,7 @@ for (let si = 0; si < searches.length; si++) {
         });
     }
 
-    // ── Step 2: districts (concurrent, proxy rotates IPs) ─────────────────
+    // Step 2: districts (concurrent, proxy rotates IPs)
     if (districtUrls.length > 0 && results.length < maxResults) {
         const needed = maxResults - results.length;
         console.log(`  Crawling up to ${Math.min(districtUrls.length, 200)} districts (need ${needed} more)...`);
@@ -281,12 +327,12 @@ for (let si = 0; si < searches.length; si++) {
                 proxyConfiguration,
                 maxConcurrency: 10,
                 maxRequestsPerMinute: 120,
-                async requestHandler({ body }) {
+                async requestHandler({ body, request }) {
                     if (results.length >= maxResults) return;
-                    const listings = parseListings(body.toString(), what, where);
+                    const listings = parseListings(body.toString(), what, where, request.url, runStartedAt);
                     for (const item of listings) {
-                        const uid = item.id || item.name.toLowerCase();
-                        if (!seenIds.has(uid)) { seenIds.add(uid); results.push(item); }
+                        const uid = makeDedupeKey(item);
+                        if (uid && !seenIds.has(uid)) { seenIds.add(uid); results.push(item); }
                     }
                 },
                 failedRequestHandler() {},
@@ -302,13 +348,18 @@ for (let si = 0; si < searches.length; si++) {
         console.log(`  Districts done: ${results.length} total results`);
     }
 
-    const toSave = results.slice(0, maxResults);
+    let filteredResults = results;
+    if (onlyWithPhone) filteredResults = filteredResults.filter(item => item.phone);
+    if (onlyWithWebsite) filteredResults = filteredResults.filter(item => item.website);
+    if (onlyWithEmail) filteredResults = filteredResults.filter(item => item.email);
+
+    const toSave = filteredResults.slice(0, maxResults);
     if (toSave.length > 0) {
         await dataset.pushData(toSave);
         totalSaved += toSave.length;
-        console.log(`  ✔ ${toSave.length} saved | grand total: ${totalSaved}`);
+        console.log(`  Saved ${toSave.length} | grand total: ${totalSaved}`);
     } else {
-        console.warn(`  ✘ 0 results for '${what}'/'${where}'`);
+        console.warn(`  0 results for '${what}'/'${where}' after filters`);
     }
 }
 
