@@ -144,17 +144,23 @@ async def scrape_search(what, where, max_results,
                 Actor.log.info("No listings found, stopping")
                 break
 
+            new_this_page = 0
             for item in listings:
-                uid = item.get("id") or (item.get("name","") + item.get("address",""))
-                if uid and uid in seen_ids: continue
-                if uid: seen_ids.add(uid)
+                uid = item.get("id") or (item.get("name","").lower().strip() + "|" + item.get("sourceUrl",""))
+                if not uid or uid == "|": uid = item.get("name","").lower().strip()
+                if uid in seen_ids: continue
+                seen_ids.add(uid)
+                new_this_page += 1
                 if only_with_phone   and not item.get("phone"):   continue
                 if only_with_website and not item.get("website"): continue
                 if only_with_email   and not item.get("email"):   continue
                 results.append(item)
                 if len(results) >= max_results: break
 
-            Actor.log.info(f"Running total: {len(results)}/{max_results}")
+            Actor.log.info(f"Page {page}: {new_this_page} new, {len(listings)-new_this_page} dupes | total {len(results)}/{max_results}")
+            if new_this_page == 0:
+                Actor.log.info("All listings on this page are duplicates — stopping")
+                break
             if len(results) >= max_results:
                 break
 
@@ -244,18 +250,22 @@ def parse_listings(html: str, what: str, where: str) -> list[dict]:
         Actor.log.info(f"JSON-LD: {len(listings)} items")
         return listings
 
-    # Strategy 2: PagineGialle v7 search-itm cards
-    # Each card contains class="search-itm__content" with all business data
-    # Anchor on "search-itm__rag" (the h2 name element) and extract a ~4KB window
-    # then parse address/phone/etc from the surrounding context.
+    # Strategy 2: PagineGialle v7 — anchor on outer card div
+    # class="search-itm search-itm--new card-listing..."
+    # This gives us the complete card including address and phone
 
-    # Find all h2 names with search-itm__rag class
-    name_positions = [m.start() for m in re.finditer(r'class="[^"]*search-itm__rag[^"]*"', html)]
-    Actor.log.info(f"search-itm__rag positions: {len(name_positions)} found")
+    card_positions = [m.start() for m in re.finditer(
+        r'class="search-itm[^"]*card-listing[^"]*"', html)]
+    Actor.log.info(f"card-listing positions: {len(card_positions)} found")
 
-    for pos in name_positions:
-        # Take 4KB before (to get image/outer tags) and 3KB after (contact info)
-        block = html[max(0, pos - 1500):pos + 10000]
+    if not card_positions:
+        # Fallback: anchor on name h2
+        card_positions = [m.start() for m in re.finditer(
+            r'class="[^"]*search-itm__rag[^"]*"', html)]
+        Actor.log.info(f"search-itm__rag fallback: {len(card_positions)} found")
+
+    for pos in card_positions:
+        block = html[pos:pos + 12000]  # 12KB from card start = full card
         item = parse_search_itm_block(block, what, where)
         if item and item.get("name") and not is_section_header(item["name"]):
             listings.append(item)
@@ -306,27 +316,35 @@ def parse_search_itm_block(block: str, what: str, where: str) -> dict | None:
     if not name:
         return None
 
-    # Source URL - paginegialle.it profile link
+    # Source URL - paginegialle.it profile link (a.remove_blank_for_app)
     src_m = re.search(
-        r'href="(https?://(?:www\.)?paginegialle\.it/[^"?]+)"',
-        block[:2000]
+        r'href="(https?://(?:www\.)?paginegialle\.it/[a-z0-9\-]+)"',
+        block
     )
     source_url = src_m.group(1) if src_m else ""
 
-    # Phone - href="tel:+39..." or data-tr containing "phone"
-    phone = clean_phone(get([
+    # Phone: class="search-itm__phone-item" (always in HTML, no JS needed)
+    phone_m = re.search(
+        r'class="[^"]*search-itm__phone-item[^"]*"[^>]*>\s*([0-9][^<]{5,20}?)\s*<',
+        block, re.IGNORECASE
+    )
+    phone = clean_phone(phone_m.group(1).strip()) if phone_m else clean_phone(get([
         r'href="tel:([^"]+)"',
-        r'data-tr="[^"]*(?:phone|tel|numero)[^"]*"[^>]*>(.*?)</',
-        r'class="[^"]*(?:phone|tel|telefono|numero)[^"]*"[^>]*>(.*?)</',
+        r'class="[^"]*(?:phone|tel|telefono)[^"]*"[^>]*>(.*?)</',
     ]))
 
-    # Address - PagineGialle v7 uses search-itm__address or similar
-    address = get([
-        r'class="[^"]*search-itm__address[^"]*"[^>]*>(.*?)</',
-        r'class="[^"]*(?:address|indirizzo|adr|street|via)[^"]*"[^>]*>(.*?)</',
-        r'itemprop="streetAddress"[^>]*>(.*?)</',
-        r'data-tr="[^"]*(?:address|indirizzo)[^"]*"[^>]*>(.*?)</',
-    ])
+    # Address: class="search-itm__adr" contains full address text
+    adr_m = re.search(
+        r'class="[^"]*search-itm__adr[^"]*"[^>]*>.*?<div[^>]*>\s*(.*?)\s*</div>',
+        block, re.DOTALL | re.IGNORECASE
+    )
+    if adr_m:
+        address = clean_text(re.sub(r'<[^>]+>', '', adr_m.group(1)))
+    else:
+        address = get([
+            r'class="[^"]*(?:adr|address|indirizzo)[^"]*"[^>]*>(.*?)</',
+            r'itemprop="streetAddress"[^>]*>(.*?)</',
+        ])
 
     # Category: skip badges like "Suggerito"/"Consigliato", use search what
     # The real category label is in search-itm__label but often shows badge text
