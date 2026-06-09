@@ -1,55 +1,44 @@
 """
-PagineGialle.it Business Scraper
-Apify Actor - ayrtondavoli97/paginegialle-scraper
+PagineGialle.it Business Scraper - v2
+Architecture:
+  Step 1: GET paginegialle.it/ricerca/{what}/{where}
+          → extract feOptions.shiny_pgimp_src (internal API URL)
+  Step 2: GET ssc.paginegialle.it/cgi-bin/jimpres.cgi?...
+          → parse HTML with listing cards (vcard microformat)
+  Step 3: Paginate by incrementing PAGINA and INIZIO params
 """
 
 import asyncio
 import math
 import re
 import json
-import base64
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 import httpx
 from apify import Actor
 from .utils import clean_phone, clean_text
 
-BASE_URL = "https://www.paginegialle.it"
-RESULTS_PER_PAGE = 20
+SEARCH_BASE    = "https://www.paginegialle.it/ricerca/{what}/{where}"
+RESULTS_PER_PAGE = 25  # NADV=25 in API
 
-HEADERS = {
+
+HEADERS_HTML = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
     "Connection": "keep-alive",
     "Referer": "https://www.paginegialle.it/",
 }
 
-
-def make_client(proxy_url: str | None = None) -> httpx.AsyncClient:
-    """
-    Build httpx client. Apify proxy (10.x.x.x:8011) needs
-    Proxy-Authorization header injected manually — httpx mounts
-    it correctly when proxy= is a full http://user:pass@host:port string.
-    """
-    transport = None
-
-    if proxy_url:
-        parsed = urlparse(proxy_url)
-        # Build proxy with explicit auth
-        proxy_str = proxy_url  # httpx accepts user:pass@host:port directly
-        transport = httpx.AsyncHTTPTransport(proxy=proxy_str)
-
-    return httpx.AsyncClient(
-        headers=HEADERS,
-        follow_redirects=True,
-        timeout=httpx.Timeout(30.0),
-        transport=transport,
-    )
+HEADERS_API = {
+    **HEADERS_HTML,
+    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+    "Referer": "https://www.paginegialle.it/",
+}
 
 
 async def main() -> None:
@@ -68,13 +57,12 @@ async def main() -> None:
             Actor.log.error("Input 'searches' is empty.")
             return
 
-        # ── Proxy setup ────────────────────────────────────────────────────
         proxy_url = None
         if use_proxy:
             proxy_cfg = await Actor.create_proxy_configuration(country_code=proxy_country)
             proxy_url = await proxy_cfg.new_url()
             p = urlparse(proxy_url)
-            Actor.log.info(f"Proxy: {p.scheme}://***:***@{p.hostname}:{p.port}")
+            Actor.log.info(f"Proxy: {p.scheme}://***@{p.hostname}:{p.port}")
 
         kv          = await Actor.open_key_value_store()
         dataset     = await Actor.open_dataset()
@@ -100,120 +88,129 @@ async def main() -> None:
             if results:
                 await dataset.push_data(results)
                 total_saved += len(results)
-                Actor.log.info(f"✔ {len(results)} saved")
+                Actor.log.info(f"✔ {len(results)} saved for '{what}'/'{where}'")
             else:
                 Actor.log.warning(f"✘ 0 results for '{what}'/'{where}'")
 
         Actor.log.info(f"Done. Total: {total_saved}")
 
 
-async def fetch_with_fallback(url: str, proxy_url: str | None, kv, label: str) -> httpx.Response | None:
-    """
-    Try fetching URL:
-    1. With proxy (if provided)
-    2. Without proxy (direct) if proxy fails
-    Always saves raw HTML + status to KV for debug.
-    """
-    attempts = []
-    if proxy_url:
-        attempts.append(("proxy", proxy_url))
-    attempts.append(("direct", None))  # always try direct as fallback
+async def fetch(client: httpx.AsyncClient, url: str, headers: dict, kv=None, kv_key: str = "") -> str | None:
+    """Fetch URL, return text or None. Saves raw to KV if key given."""
+    try:
+        resp = await client.get(url, headers=headers)
+        Actor.log.info(f"HTTP {resp.status_code} — {len(resp.text)} chars — {str(resp.url)[:80]}")
+        if kv and kv_key:
+            await kv.set_value(kv_key, resp.text[:120_000],
+                               content_type="text/html; charset=utf-8")
+        if resp.status_code == 200:
+            return resp.text
+        Actor.log.warning(f"Non-200: {resp.status_code}")
+        return None
+    except Exception as e:
+        Actor.log.error(f"Request error: {e}")
+        if kv and kv_key:
+            await kv.set_value(kv_key + "_err", {"error": str(e), "url": url})
+        return None
 
-    for mode, purl in attempts:
-        Actor.log.info(f"Attempt [{mode}]: GET {url}")
-        try:
-            async with make_client(purl) as client:
-                resp = await client.get(url)
-            Actor.log.info(f"[{mode}] HTTP {resp.status_code} — {len(resp.text)} chars")
 
-            # Save raw to KV
-            await kv.set_value(
-                f"raw_{label}_{mode}",
-                resp.text[:60_000],
-                content_type="text/html; charset=utf-8",
-            )
-
-            if resp.status_code == 200:
-                return resp
-            elif resp.status_code == 407:
-                Actor.log.warning(f"[{mode}] 407 proxy auth failed, trying next")
-                continue
-            elif resp.status_code == 429:
-                Actor.log.warning(f"[{mode}] 429 rate limit, sleeping 10s")
-                await asyncio.sleep(10)
-                return resp
-            else:
-                Actor.log.warning(f"[{mode}] HTTP {resp.status_code}")
-                return resp
-
-        except Exception as e:
-            Actor.log.error(f"[{mode}] Exception: {e}")
-            await kv.set_value(f"error_{label}_{mode}", {"error": str(e), "url": url})
-            continue
-
-    Actor.log.error(f"All attempts failed for {url}")
-    return None
+def make_client(proxy_url: str | None) -> httpx.AsyncClient:
+    transport = httpx.AsyncHTTPTransport(proxy=proxy_url) if proxy_url else None
+    return httpx.AsyncClient(follow_redirects=True,
+                             timeout=httpx.Timeout(30.0),
+                             transport=transport)
 
 
 async def scrape_search(what, where, max_results, proxy_url,
                         only_with_phone, only_with_website, only_with_email, kv):
-    results     = []
-    page        = 1
-    total_pages = 1
-    seen_ids    = set()
-    ws          = normalize_slug(what)
-    wr          = normalize_slug(where)
 
-    while page <= total_pages and len(results) < max_results:
-        url   = build_url(ws, wr, page)
-        label = f"{what}_{where}_p{page}"
+    results    = []
+    seen_ids   = set()
+    what_slug  = normalize_slug(what)
+    where_slug = normalize_slug(where)
+    search_url = SEARCH_BASE.format(what=what_slug, where=where_slug)
 
-        resp = await fetch_with_fallback(url, proxy_url, kv, label)
-        if resp is None or resp.status_code != 200:
-            break
+    # ── Step 1: load search page, extract API URL ─────────────────────────
+    Actor.log.info(f"Step 1: loading search page {search_url}")
 
-        data = parse_page(resp.text, what, where)
+    async with make_client(proxy_url) as client:
+        html = await fetch(client, search_url, HEADERS_HTML,
+                           kv=kv, kv_key=f"search_{what}_{where}")
 
-        if page == 1:
-            await kv.set_value(f"parse_{what}_{where}", {
-                "strategy":    data.get("strategy"),
-                "listings":    len(data.get("listings", [])),
-                "total_count": data.get("total_count"),
-                "html_head":   resp.text[:1000],
-            })
-            Actor.log.info(
-                f"Parse: strategy={data.get('strategy')} "
-                f"listings={len(data.get('listings',[]))} "
-                f"total={data.get('total_count')}"
-            )
-            tc = data.get("total_count", 0)
-            if tc > 0:
-                total_pages = min(
-                    math.ceil(tc / RESULTS_PER_PAGE),
-                    math.ceil(max_results / RESULTS_PER_PAGE),
-                )
-                Actor.log.info(f"~{tc} total → {total_pages} pages")
-            else:
-                total_pages = math.ceil(max_results / RESULTS_PER_PAGE)
+    if not html:
+        # Retry without proxy
+        Actor.log.warning("Search page failed with proxy, retrying direct")
+        async with make_client(None) as client:
+            html = await fetch(client, search_url, HEADERS_HTML,
+                               kv=kv, kv_key=f"search_{what}_{where}_direct")
 
-        listings = data.get("listings", [])
-        if not listings:
-            Actor.log.info(f"Page {page}: no listings, stopping")
-            break
+    if not html:
+        Actor.log.error("Could not load search page")
+        return []
 
-        for item in listings:
-            uid = item.get("id") or (item.get("name","") + item.get("address",""))
-            if uid and uid in seen_ids: continue
-            if uid: seen_ids.add(uid)
-            if only_with_phone   and not item.get("phone"):   continue
-            if only_with_website and not item.get("website"): continue
-            if only_with_email   and not item.get("email"):   continue
-            results.append(item)
-            if len(results) >= max_results: break
+    # ── Step 2: extract API URL from feOptions.shiny_pgimp_src ───────────
+    api_url = extract_api_url(html)
+    if not api_url:
+        Actor.log.error("Could not find API URL (shiny_pgimp_src) in page HTML")
+        await kv.set_value(f"debug_{what}_{where}", {
+            "msg": "shiny_pgimp_src not found",
+            "html_snippet": html[:2000],
+        })
+        return []
 
-        Actor.log.info(f"Page {page}/{total_pages} → {len(results)} total")
-        page += 1
-        await asyncio.sleep(1.0)
+    Actor.log.info(f"Step 2: found API URL, QTA={get_param(api_url, 'QTA')} PAGINA={get_param(api_url, 'PAGINA')}")
+
+    total_count  = int(get_param(api_url, "QTA") or "0")
+    results_per  = int(get_param(api_url, "NADV") or "25")
+    total_pages  = min(
+        math.ceil(total_count / results_per),
+        math.ceil(max_results / results_per),
+    ) if total_count > 0 else 10
+
+    Actor.log.info(f"Total: ~{total_count} results → {total_pages} pages")
+
+    # ── Step 3: paginate API ──────────────────────────────────────────────
+    async with make_client(proxy_url) as client:
+        for page in range(1, total_pages + 1):
+            paged_url = set_pagination(api_url, page, results_per)
+            Actor.log.info(f"API page {page}/{total_pages}: {paged_url[:100]}...")
+
+            api_html = await fetch(client, paged_url, HEADERS_API,
+                                   kv=kv if page == 1 else None,
+                                   kv_key=f"api_{what}_{where}_p1")
+
+            if not api_html:
+                Actor.log.warning(f"Page {page} failed, stopping")
+                break
+
+            listings = parse_api_html(api_html, what, where)
+            Actor.log.info(f"Page {page}: parsed {len(listings)} listings")
+
+            if page == 1:
+                await kv.set_value(f"parse_{what}_{where}", {
+                    "page1_listings": len(listings),
+                    "total_count": total_count,
+                    "api_html_snippet": api_html[:1000],
+                })
+
+            if not listings:
+                Actor.log.info("Empty page, stopping")
+                break
+
+            for item in listings:
+                uid = item.get("id") or (item.get("name","") + item.get("address",""))
+                if uid and uid in seen_ids: continue
+                if uid: seen_ids.add(uid)
+                if only_with_phone   and not item.get("phone"):   continue
+                if only_with_website and not item.get("website"): continue
+                if only_with_email   and not item.get("email"):   continue
+                results.append(item)
+                if len(results) >= max_results: break
+
+            Actor.log.info(f"Running total: {len(results)}")
+            if len(results) >= max_results:
+                break
+            await asyncio.sleep(0.8)
 
     return results
 
@@ -228,193 +225,210 @@ def normalize_slug(text: str) -> str:
     text = re.sub(r"[^a-z0-9\-]", "", text)
     return re.sub(r"-+", "-", text).strip("-")
 
-def build_url(what: str, where: str, page: int) -> str:
-    base = f"{BASE_URL}/ricerca/{what}/{where}"
-    return f"{base}?pg={page}" if page > 1 else base
+
+def extract_api_url(html: str) -> str | None:
+    """Extract feOptions.shiny_pgimp_src from page HTML."""
+    m = re.search(r'shiny_pgimp_src:\s*"(https://ssc\.paginegialle\.it[^"]+)"', html)
+    if m:
+        return m.group(1)
+    # fallback: look for the URL in any context
+    m = re.search(r'"(https://ssc\.paginegialle\.it/cgi-bin/jimpres\.cgi[^"]+)"', html)
+    return m.group(1) if m else None
 
 
-# ── Parsers ───────────────────────────────────────────────────────────────────
-
-def parse_page(html: str, what: str, where: str) -> dict:
-    # 1. Embedded JS state
-    for pat in [
-        r'window\.__PG_PROPS__\s*=\s*({.+?});\s*(?:</script>|window\.)',
-        r'window\.__INITIAL_STATE__\s*=\s*({.+?});\s*(?:</script>|window\.)',
-        r'window\.__STATE__\s*=\s*({.+?});\s*(?:</script>|window\.)',
-        r'<script[^>]+id="__NEXT_DATA__"[^>]*>({.+?})</script>',
-        r'window\.pg\s*=\s*({.+?});\s*</script>',
-    ]:
-        m = re.search(pat, html, re.DOTALL)
-        if m:
-            try:
-                result = parse_state_json(json.loads(m.group(1)), what, where)
-                if result["listings"]:
-                    result["strategy"] = "js-state"
-                    return result
-            except Exception:
-                pass
-
-    # 2. JSON-LD
-    ld = parse_jsonld(html, what, where)
-    if ld["listings"]:
-        ld["strategy"] = "json-ld"
-        return ld
-
-    # 3. Inline JSON arrays
-    for m in re.finditer(r'<script[^>]*>(.*?)</script>', html, re.DOTALL):
-        arr = re.search(r'(\[\s*\{.+?"(?:name|ragioneSociale|insegna)".+?\}\s*\])', m.group(1), re.DOTALL)
-        if arr:
-            try:
-                items    = json.loads(arr.group(1))
-                listings = [l for l in (extract_listing_from_json(i,what,where) for i in items) if l and l.get("name")]
-                if listings:
-                    return {"listings": listings, "total_count": len(listings), "strategy": "inline-json"}
-            except Exception:
-                pass
-
-    result = parse_html_fallback(html, what, where)
-    result["strategy"] = "html-regex"
-    return result
+def get_param(url: str, param: str) -> str | None:
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    vals   = params.get(param)
+    return vals[0] if vals else None
 
 
-def parse_state_json(state: dict, what: str, where: str) -> dict:
-    def find_list(obj, depth=0):
-        if depth > 10: return None
-        if isinstance(obj, list) and len(obj) > 0 and isinstance(obj[0], dict):
-            if any(k in obj[0] for k in ("name","ragioneSociale","title","denominazione","insegna","businessName")):
-                return obj
-        if isinstance(obj, dict):
-            for key in ("listings","results","items","list","businesses","aziende","entries","data","records"):
-                if key in obj:
-                    r = find_list(obj[key], depth+1)
-                    if r: return r
-            for v in obj.values():
-                if isinstance(v, (dict,list)):
-                    r = find_list(v, depth+1)
-                    if r: return r
+def set_pagination(url: str, page: int, per_page: int) -> str:
+    """Update PAGINA and INIZIO params for pagination."""
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    params["PAGINA"] = [str(page)]
+    params["INIZIO"] = [str((page - 1) * per_page + 1)]
+    new_query = urlencode({k: v[0] for k, v in params.items()})
+    return urlunparse(parsed._replace(query=new_query))
+
+
+# ── Parser for ssc.paginegialle.it API response ───────────────────────────────
+
+def parse_api_html(html: str, what: str, where: str) -> list[dict]:
+    """
+    Parse the HTML returned by ssc.paginegialle.it/cgi-bin/jimpres.cgi
+    This uses hCard/vCard microformat.
+    """
+    listings = []
+
+    # Try JSON first (some API responses return JSON)
+    try:
+        data = json.loads(html)
+        if isinstance(data, list):
+            return [l for l in (extract_json_item(i, what, where) for i in data) if l]
+        if isinstance(data, dict):
+            items = data.get("results", data.get("items", data.get("data", [])))
+            if items:
+                return [l for l in (extract_json_item(i, what, where) for i in items) if l]
+    except Exception:
+        pass
+
+    # Parse vCard HTML blocks
+    # PagineGialle uses <div class="vcard"> or <li class="vcard">
+    blocks = re.findall(
+        r'<(?:div|li|article)[^>]+class="[^"]*vcard[^"]*"[^>]*>(.*?)</(?:div|li|article)>',
+        html, re.DOTALL | re.IGNORECASE
+    )
+
+    if not blocks:
+        # Try broader patterns
+        blocks = re.findall(
+            r'<(?:div|li|article)[^>]+class="[^"]*(?:result|listing|item|company)[^"]*"[^>]*>(.*?)</(?:div|li|article)>',
+            html, re.DOTALL | re.IGNORECASE
+        )
+
+    Actor.log.info(f"API HTML: {len(html)} chars, {len(blocks)} vcard blocks found")
+
+    for block in blocks:
+        item = parse_vcard_block(block, what, where)
+        if item and item.get("name"):
+            listings.append(item)
+
+    return listings
+
+
+def parse_vcard_block(block: str, what: str, where: str) -> dict | None:
+    """Parse a single vCard microformat block from PagineGialle API."""
+
+    def get(patterns):
+        for p in patterns:
+            m = re.search(p, block, re.DOTALL | re.IGNORECASE)
+            if m:
+                return clean_text(re.sub(r"<[^>]+>", "", m.group(1)))
+        return ""
+
+    # Name: class="org" or class="fn" in hCard
+    name = get([
+        r'class="[^"]*\borg\b[^"]*"[^>]*>(.*?)</',
+        r'class="[^"]*\bfn\b[^"]*"[^>]*>(.*?)</',
+        r'class="[^"]*name[^"]*"[^>]*>(.*?)</',
+        r'itemprop="name"[^>]*>(.*?)</',
+    ])
+    if not name:
         return None
 
-    def find_total(obj, depth=0):
-        if depth > 8: return 0
-        if isinstance(obj, dict):
-            for k in ("total","totalCount","count","totale","totalResults","numResults","found"):
-                if k in obj and isinstance(obj[k], int) and obj[k] > 0: return obj[k]
-            for v in obj.values():
-                if isinstance(v, (dict,list)):
-                    t = find_total(v, depth+1)
-                    if t: return t
-        return 0
+    # Phone: class="tel" or href="tel:"
+    phone = clean_phone(get([
+        r'href="tel:([^"]+)"',
+        r'class="[^"]*\btel\b[^"]*"[^>]*>(.*?)</',
+        r'class="[^"]*phone[^"]*"[^>]*>(.*?)</',
+        r'itemprop="telephone"[^>]*>(.*?)</',
+    ]))
 
-    items    = find_list(state) or []
-    total    = find_total(state)
-    listings = [l for l in (extract_listing_from_json(i,what,where) for i in items) if l and l.get("name")]
-    return {"listings": listings, "total_count": total}
+    # Address parts
+    address  = get([r'class="[^"]*street-address[^"]*"[^>]*>(.*?)</', r'itemprop="streetAddress"[^>]*>(.*?)</',  r'class="[^"]*adr[^"]*"[^>]*>(.*?)</'])
+    city     = get([r'class="[^"]*locality[^"]*"[^>]*>(.*?)</',       r'itemprop="addressLocality"[^>]*>(.*?)</']) or where
+    province = get([r'class="[^"]*region[^"]*"[^>]*>(.*?)</',         r'itemprop="addressRegion"[^>]*>(.*?)</'])
+    postcode = get([r'class="[^"]*postal-code[^"]*"[^>]*>(.*?)</',    r'itemprop="postalCode"[^>]*>(.*?)</'])
 
+    # Website
+    web_m = re.search(r'href="(https?://(?!(?:www\.)?paginegialle\.it)[^"]+)"[^>]*class="[^"]*url[^"]*"', block)
+    if not web_m:
+        web_m = re.search(r'class="[^"]*url[^"]*"[^>]*href="(https?://(?!(?:www\.)?paginegialle\.it)[^"]+)"', block)
+    website = web_m.group(1) if web_m else ""
 
-def parse_jsonld(html: str, what: str, where: str) -> dict:
-    listings = []
-    for m in re.finditer(r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL|re.IGNORECASE):
-        try:
-            ld = json.loads(m.group(1).strip())
-            for item in (ld if isinstance(ld,list) else [ld]):
-                t = item.get("@type","")
-                if isinstance(t,list): t = t[0] if t else ""
-                if not any(x in t for x in ("Business","Restaurant","Store","Organization","Service","Company")): continue
-                addr = item.get("address",{}); geo = item.get("geo",{}); agg = item.get("aggregateRating",{}) or {}
-                listings.append({
-                    "id": item.get("@id",""), "name": clean_text(item.get("name","")),
-                    "subtitle":"", "description": clean_text(item.get("description","")),
-                    "category": clean_text(str(t)),
-                    "phone": clean_phone(item.get("telephone","")),
-                    "email": clean_text(item.get("email","")),
-                    "website": clean_text(item.get("url","")),
-                    "address": clean_text(addr.get("streetAddress","") if isinstance(addr,dict) else str(addr)),
-                    "city": clean_text(addr.get("addressLocality",where) if isinstance(addr,dict) else where),
-                    "province": clean_text(addr.get("addressRegion","") if isinstance(addr,dict) else ""),
-                    "postalCode": clean_text(addr.get("postalCode","") if isinstance(addr,dict) else ""),
-                    "latitude": float(geo.get("latitude",0)) or None,
-                    "longitude": float(geo.get("longitude",0)) or None,
-                    "rating": float(agg.get("ratingValue",0)) or None,
-                    "reviewCount": agg.get("reviewCount"),
-                    "image": item.get("image",""), "facebook":"", "instagram":"",
-                    "searchWhat": what, "searchWhere": where, "sourceUrl": item.get("url",""),
-                })
-        except Exception:
-            pass
-    total_m = re.search(r'"(?:total|totalResults|count)"\s*:\s*(\d+)', html)
-    return {"listings": listings, "total_count": int(total_m.group(1)) if total_m else len(listings)}
+    # Email
+    em_m  = re.search(r'href="mailto:([^"]+)"', block)
+    email = em_m.group(1) if em_m else ""
+    if not email:
+        em_m = re.search(r'[\w._%+\-]+@[\w.\-]+\.[a-zA-Z]{2,}', block)
+        email = em_m.group(0) if em_m else ""
 
+    # Category
+    category = get([r'class="[^"]*category[^"]*"[^>]*>(.*?)</', r'class="[^"]*categoria[^"]*"[^>]*>(.*?)</']) or what
 
-def extract_listing_from_json(item: dict, what: str, where: str) -> dict | None:
-    if not isinstance(item, dict): return None
-    place = item.get("place", item.get("address", item.get("indirizzo", {})))
-    if isinstance(place, str):
-        address_str, city, province, postal_code, lat, lon = place, where, "", "", None, None
-    else:
-        if not isinstance(place, dict): place = {}
-        address_str = clean_text(place.get("address", place.get("street", place.get("via",""))))
-        city        = clean_text(place.get("locality", place.get("city", place.get("citta",where))))
-        province    = clean_text(place.get("region",  place.get("province", place.get("provincia",""))))
-        postal_code = clean_text(place.get("postal-code", place.get("postalCode", place.get("cap",""))))
-        lat = place.get("latitude", place.get("lat"))
-        lon = place.get("longitude", place.get("lon", place.get("lng")))
+    # Rating
+    rating_m = re.search(r'(?:rating|voto|stelle)[^>]*>([0-9.]+)<', block, re.IGNORECASE)
+    rating   = float(rating_m.group(1)) if rating_m else None
 
-    raw_phone = item.get("telephone", item.get("phone", item.get("tel", item.get("telefono",""))))
-    phone = clean_phone(str(raw_phone)) if raw_phone else ""
-    rating = item.get("rating", item.get("score", item.get("voto")))
-    try: rating = float(rating) if rating is not None else None
-    except: rating = None
-    social = item.get("social",{})
-    if isinstance(social,list): social = {s.get("type","x"): s.get("url","") for s in social if isinstance(s,dict)}
-    if not isinstance(social,dict): social = {}
+    # ID: data-cid, data-id, or any UUID-like in block
+    id_m = re.search(r'data-(?:cid|id|pgid)="([^"]+)"', block, re.IGNORECASE)
+    if not id_m:
+        id_m = re.search(r'([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})', block, re.IGNORECASE)
+    bid = id_m.group(1) if id_m else ""
+
+    # GPS
+    lat_m = re.search(r'data-lat="([^"]+)"|itemprop="latitude"[^>]*content="([^"]+)"', block)
+    lon_m = re.search(r'data-lon="([^"]+)"|itemprop="longitude"[^>]*content="([^"]+)"', block)
+    lat   = float(lat_m.group(1) or lat_m.group(2)) if lat_m else None
+    lon   = float(lon_m.group(1) or lon_m.group(2)) if lon_m else None
+
+    # Image
+    img_m = re.search(r'<img[^>]+src="([^"]+(?:jpg|jpeg|png|webp)[^"]*)"', block, re.IGNORECASE)
+    image = img_m.group(1) if img_m else ""
+
+    # Source URL
+    src_m = re.search(r'href="(https?://(?:www\.)?paginegialle\.it/[^"]+)"', block)
+    source_url = src_m.group(1) if src_m else ""
 
     return {
-        "id": str(item.get("id", item.get("pgId", item.get("codice","")))),
-        "name": clean_text(item.get("name", item.get("ragioneSociale", item.get("title", item.get("denominazione", item.get("insegna","")))))),
-        "subtitle": clean_text(item.get("subtitle", item.get("sottotitolo",""))),
-        "description": clean_text(item.get("description", item.get("descrizione",""))),
-        "category": clean_text(item.get("category", item.get("categoria", what))),
-        "phone": phone, "email": clean_text(item.get("email", item.get("mail",""))),
-        "website": clean_text(item.get("website", item.get("sito", item.get("url","")))),
-        "address": address_str, "city": city, "province": province, "postalCode": postal_code,
-        "latitude": float(lat) if lat else None, "longitude": float(lon) if lon else None,
-        "rating": rating, "reviewCount": item.get("reviewCount", item.get("reviews", item.get("numRecensioni"))),
-        "image": item.get("image", item.get("foto", item.get("logo",""))),
-        "facebook": social.get("facebook",""), "instagram": social.get("instagram",""),
-        "searchWhat": what, "searchWhere": where, "sourceUrl": item.get("sourceUrl", item.get("pgUrl","")),
+        "id":          bid,
+        "name":        name,
+        "subtitle":    "",
+        "description": get([r'class="[^"]*(?:note|descrizione|description)[^"]*"[^>]*>(.*?)</']),
+        "category":    category,
+        "phone":       phone,
+        "email":       email,
+        "website":     website,
+        "address":     address,
+        "city":        city,
+        "province":    province,
+        "postalCode":  postcode,
+        "latitude":    lat,
+        "longitude":   lon,
+        "rating":      rating,
+        "reviewCount": None,
+        "image":       image,
+        "facebook":    "",
+        "instagram":   "",
+        "searchWhat":  what,
+        "searchWhere": where,
+        "sourceUrl":   source_url,
     }
 
 
-def parse_html_fallback(html: str, what: str, where: str) -> dict:
-    listings, blocks = [], []
-    for pattern in [
-        r'<article[^>]+>(.*?)</article>',
-        r'<div[^>]+class="[^"]*(?:listing|result|business|card)[^"]*"[^>]*>(.*?(?:</div>\s*){2})',
-        r'<li[^>]+class="[^"]*(?:listing|result)[^"]*"[^>]*>(.*?)</li>',
-    ]:
-        blocks = re.findall(pattern, html, re.DOTALL|re.IGNORECASE)
-        if len(blocks) >= 2: break
-
-    for block in blocks:
-        def extract(pats):
-            for p in pats:
-                m = re.search(p, block, re.DOTALL|re.IGNORECASE)
-                if m: return clean_text(re.sub(r"<[^>]+>","",m.group(1)))
-            return ""
-        name = extract([r'class="[^"]*(?:name|titolo|denominazione|insegna)[^"]*"[^>]*>(.*?)</',r'<h[1-3][^>]*>(.*?)</h[1-3]>'])
-        if not name: continue
-        phone   = clean_phone(extract([r'class="[^"]*(?:phone|tel)[^"]*"[^>]*>(.*?)</',r'href="tel:([^"]+)"']))
-        address = extract([r'class="[^"]*(?:address|indirizzo)[^"]*"[^>]*>(.*?)</'])
-        cat     = extract([r'class="[^"]*(?:category|categoria)[^"]*"[^>]*>(.*?)</']) or what
-        em_m    = re.search(r'[\w._%+\-]+@[\w.\-]+\.[a-zA-Z]{2,}', block)
-        web_m   = re.search(r'href="(https?://(?!(?:www\.)?paginegialle\.it)[^"]+)"', block)
-        listings.append({
-            "id":"","name":name,"subtitle":"","description":"","category":cat,
-            "phone":phone,"email":em_m.group(0) if em_m else "","website":web_m.group(1) if web_m else "",
-            "address":address,"city":where,"province":"","postalCode":"",
-            "latitude":None,"longitude":None,"rating":None,"reviewCount":None,
-            "image":"","facebook":"","instagram":"","searchWhat":what,"searchWhere":where,"sourceUrl":"",
-        })
-
-    total_m = re.search(r'"(?:total|totalCount|numResults)"\s*:\s*(\d+)', html)
-    return {"listings": listings, "total_count": int(total_m.group(1)) if total_m else len(listings)}
+def extract_json_item(item: dict, what: str, where: str) -> dict | None:
+    if not isinstance(item, dict): return None
+    place = item.get("place", item.get("address", {}))
+    if not isinstance(place, dict): place = {}
+    lat = place.get("latitude", place.get("lat"))
+    lon = place.get("longitude", place.get("lon", place.get("lng")))
+    raw_phone = item.get("telephone", item.get("phone", item.get("tel", "")))
+    phone = clean_phone(str(raw_phone)) if raw_phone else ""
+    try: rating = float(item.get("rating","")) if item.get("rating") else None
+    except: rating = None
+    return {
+        "id":          str(item.get("id", item.get("pgId",""))),
+        "name":        clean_text(item.get("name", item.get("ragioneSociale", item.get("denominazione","")))),
+        "subtitle":    clean_text(item.get("subtitle","")),
+        "description": clean_text(item.get("description", item.get("descrizione",""))),
+        "category":    clean_text(item.get("category", item.get("categoria", what))),
+        "phone":       phone,
+        "email":       clean_text(item.get("email","")),
+        "website":     clean_text(item.get("website", item.get("sito",""))),
+        "address":     clean_text(place.get("address", place.get("street",""))),
+        "city":        clean_text(place.get("locality", place.get("city", where))),
+        "province":    clean_text(place.get("region","")),
+        "postalCode":  clean_text(place.get("postalCode", place.get("cap",""))),
+        "latitude":    float(lat) if lat else None,
+        "longitude":   float(lon) if lon else None,
+        "rating":      rating,
+        "reviewCount": item.get("reviewCount"),
+        "image":       item.get("image",""),
+        "facebook":    "",
+        "instagram":   "",
+        "searchWhat":  what,
+        "searchWhere": where,
+        "sourceUrl":   item.get("url",""),
+    }
