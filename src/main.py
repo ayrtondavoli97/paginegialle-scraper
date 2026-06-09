@@ -143,31 +143,40 @@ async def scrape_search(what, where, max_results, proxy_url,
         cookies = dict(client.cookies)
         Actor.log.info(f"Session cookies after step1: {list(cookies.keys())}")
 
-        # Step 2: extract internal API URL
-        api_url = extract_api_url(html)
-        if not api_url:
-            Actor.log.error("shiny_pgimp_src not found in HTML")
-            await kv.set_value(f"debug_{what}_{where}", {
-                "msg": "shiny_pgimp_src not found",
-                "html_head": html[:2000],
-            })
+        # Step 2: call jimpres.cgi → JS wrapper → decode XOR → pgimpres.cgi URL
+        jimpres_url = extract_api_url(html)
+        if not jimpres_url:
+            Actor.log.error("shiny_pgimp_src not found")
+            await kv.set_value(f"debug_{what}_{where}", {"msg": "no shiny_pgimp_src", "html_head": html[:2000]})
             return []
 
-        total_count = int(get_param(api_url, "QTA") or "0")
-        results_per = int(get_param(api_url, "NADV") or "25")
+        Actor.log.info("Step 2: fetching jimpres.cgi wrapper...")
+        js_wrapper = await fetch(client, jimpres_url, HEADERS_API,
+                                 kv=kv, kv_key=f"jimpres_{what}_{where}")
+        if not js_wrapper:
+            Actor.log.error("jimpres.cgi returned nothing")
+            return []
+
+        real_api_url = extract_real_api_url(js_wrapper)
+        if not real_api_url:
+            Actor.log.error("Could not decode real API URL from JS wrapper")
+            await kv.set_value(f"debug2_{what}_{where}", {"js_snippet": js_wrapper[:500]})
+            return []
+
+        Actor.log.info(f"Step 2 decoded: pgimpres.cgi QTA={get_param(real_api_url, 'QTA')} NADV={get_param(real_api_url, 'NADV')}")
+        total_count = int(get_param(real_api_url, "QTA") or "0")
+        results_per = int(get_param(real_api_url, "NADV") or "25")
         total_pages = min(
             math.ceil(total_count / results_per),
             math.ceil(max_results / results_per),
         ) if total_count > 0 else 10
 
-        Actor.log.info(f"Step 2: API found — QTA={total_count} NADV={results_per} → {total_pages} pages")
-
-        # Small delay so the server sees a realistic browsing pattern
+        Actor.log.info(f"Total: ~{total_count} → {total_pages} pages")
         await asyncio.sleep(0.5)
 
-        # Step 3: paginate API with same session
+        # Step 3: paginate pgimpres.cgi (real listing endpoint)
         for page in range(1, total_pages + 1):
-            paged_url = set_pagination(api_url, page, results_per)
+            paged_url = set_pagination(real_api_url, page, results_per)
             Actor.log.info(f"API page {page}/{total_pages}: {paged_url[:120]}...")
 
             api_html = await fetch(client, paged_url, HEADERS_API,
@@ -220,13 +229,42 @@ def normalize_slug(text: str) -> str:
 
 
 def extract_api_url(html: str) -> str | None:
-    """Extract feOptions.shiny_pgimp_src from page HTML."""
+    """Extract feOptions.shiny_pgimp_src (jimpres.cgi URL) from page HTML."""
     m = re.search(r'shiny_pgimp_src:\s*"(https://ssc\.paginegialle\.it[^"]+)"', html)
     if m:
         return m.group(1)
-    # fallback: look for the URL in any context
     m = re.search(r'"(https://ssc\.paginegialle\.it/cgi-bin/jimpres\.cgi[^"]+)"', html)
     return m.group(1) if m else None
+
+
+def extract_real_api_url(js_response: str) -> str | None:
+    """
+    Parse the JS wrapper returned by jimpres.cgi.
+    The JS contains _pgimp() which XOR-decodes the real URL (pgimpres.cgi)
+    and builds B.src = decoded_url + params.
+    We extract the params from B.src and build the real URL directly.
+    """
+    # Decode XOR-1 obfuscated base URL
+    # JS: for(i=0;i<L.length;i++) DL += String.fromCharCode(1^L.charCodeAt(i))
+    # For paginegialle.it the encoded string is always the same
+    encoded = "iuuqr;..rrb/q`fhodfh`mmd/hu.bfh,cho.qfhlqsdr/bfh"
+    real_base = "".join(chr(1 ^ ord(c)) for c in encoded)
+    # real_base = "https://ssc.paginegialle.it/cgi-bin/pgimpres.cgi"
+
+    # Extract params from B.src=DL+"?..."+hr+"..."+Math...
+    m = re.search(r'B\.src=DL\+"(\?[^"]+)"\+hr', js_response)
+    if not m:
+        # Try alternate pattern
+        m = re.search(r'B\.src=DL\+"(\?[^"]+)"', js_response)
+    if not m:
+        return None
+
+    params_str = m.group(1)
+    # Add JIMPV if not present (it's in the B.src but let's ensure)
+    if "JIMPV" not in params_str:
+        params_str = "?JIMPV=001&" + params_str[1:]
+
+    return real_base + params_str
 
 
 def get_param(url: str, param: str) -> str | None:
