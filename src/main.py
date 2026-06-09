@@ -112,6 +112,7 @@ async def scrape_districts(district_urls, what, where,
     results = []
     BATCH_SIZE = 8
     BATCH_DELAY = 1.5  # seconds between batches
+    consecutive_zeros = 0
 
     # Semaphore limits concurrent connections
     semaphore = asyncio.Semaphore(BATCH_SIZE)
@@ -156,6 +157,16 @@ async def scrape_districts(district_urls, what, where,
                 f"Batch {b_idx+1}/{len(batches)}: +{new_this_batch} new | "
                 f"total {len(results)}/{max_results}"
             )
+
+            # Early stop: if 3 consecutive batches yield 0 new results, stop
+            if new_this_batch == 0:
+                consecutive_zeros = consecutive_zeros + 1 if b_idx > 0 else 1
+            else:
+                consecutive_zeros = 0
+
+            if consecutive_zeros >= 3:
+                Actor.log.info(f"3 consecutive zero-result batches — stopping early")
+                break
 
             # Short delay between batches to stay under rate limit
             if b_idx < len(batches) - 1:
@@ -331,7 +342,7 @@ def extract_districts(html: str, what_slug: str, where_slug: str) -> list[str]:
         district_urls.append(url)
 
     Actor.log.info(f"District URLs: {len(all_urls)} found, {len(district_urls)} location-based")
-    return district_urls[:60]
+    return district_urls
 
 
 def extract_total_count(html: str) -> int:
