@@ -125,7 +125,8 @@ async def scrape_search(what, where, max_results,
                     # Save chars around where listings should be (after filters)
                     "mid_html_120k":   html[118000:123000] if len(html) > 120000 else html[-5000:],
                     "mid_html_150k":   html[148000:153000] if len(html) > 150000 else "",
-                    "mid_html_200k":   html[198000:203000] if len(html) > 200000 else "",
+                    "mid_html_200k":   html[198000:210000] if len(html) > 200000 else "",
+                    "mid_html_250k":   html[248000:260000] if len(html) > 250000 else "",
                 })
                 Actor.log.info("Debug info saved to KV")
 
@@ -192,9 +193,18 @@ def extract_total_count(html: str) -> int:
 
 
 def has_next_page(html: str, current_page: int) -> bool:
-    """Check if there's a next page link."""
-    next_pattern = rf'pg={current_page + 1}'
-    return next_pattern in html or f'?pg={current_page+1}' in html
+    """Check if there's a next page link in PagineGialle pagination."""
+    next_pg = current_page + 1
+    # PagineGialle pagination patterns
+    patterns = [
+        f'pg={next_pg}',
+        f'?pg={next_pg}',
+        f'&pg={next_pg}',
+        f'"pg":{next_pg}',
+        'rel="next"',
+        f'page={next_pg}',
+    ]
+    return any(p in html for p in patterns)
 
 
 # ── Parser ────────────────────────────────────────────────────────────────────
@@ -238,7 +248,7 @@ def parse_listings(html: str, what: str, where: str) -> list[dict]:
 
     for pos in name_positions:
         # Take 4KB before (to get image/outer tags) and 3KB after (contact info)
-        block = html[max(0, pos - 500):pos + 3500]
+        block = html[max(0, pos - 300):pos + 7000]
         item = parse_search_itm_block(block, what, where)
         if item and item.get("name") and not is_section_header(item["name"]):
             listings.append(item)
@@ -296,34 +306,40 @@ def parse_search_itm_block(block: str, what: str, where: str) -> dict | None:
     )
     source_url = src_m.group(1) if src_m else ""
 
-    # Phone
+    # Phone - href="tel:+39..." or data-tr containing "phone"
     phone = clean_phone(get([
         r'href="tel:([^"]+)"',
-        r'class="[^"]*(?:tel|phone|telefono)[^"]*"[^>]*>(.*?)</',
-        r'data-tr="[^"]*phone[^"]*"[^>]*>(.*?)</',
+        r'data-tr="[^"]*(?:phone|tel|numero)[^"]*"[^>]*>(.*?)</',
+        r'class="[^"]*(?:phone|tel|telefono|numero)[^"]*"[^>]*>(.*?)</',
     ]))
 
-    # Address
+    # Address - PagineGialle v7 uses search-itm__address or similar
     address = get([
-        r'class="[^"]*(?:address|indirizzo|adr|street)[^"]*"[^>]*>(.*?)</',
+        r'class="[^"]*search-itm__address[^"]*"[^>]*>(.*?)</',
+        r'class="[^"]*(?:address|indirizzo|adr|street|via)[^"]*"[^>]*>(.*?)</',
         r'itemprop="streetAddress"[^>]*>(.*?)</',
-        r'data-tr="[^"]*address[^"]*"[^>]*>(.*?)</',
+        r'data-tr="[^"]*(?:address|indirizzo)[^"]*"[^>]*>(.*?)</',
     ])
 
-    # Category / tipo
-    category = get([
+    # Category: skip badges like "Suggerito"/"Consigliato", use search what
+    # The real category label is in search-itm__label but often shows badge text
+    raw_cat = get([
+        r'data-tr="listing-search-itm-lbl"[^>]*>.*?<span>([^<]{4,})</span>',
         r'class="[^"]*(?:category|categoria|type|tipo)[^"]*"[^>]*>(.*?)</',
-        r'data-tr="listing-search-itm-lbl"[^>]*>.*?<span>(.*?)</span>',
-    ]) or what
+    ])
+    # Filter out badge/status labels
+    badge_words = {"suggerito", "consigliato", "sponsor", "in evidenza", "verificato", "aperto", "chiuso"}
+    category = what if not raw_cat or raw_cat.lower() in badge_words else raw_cat
 
-    # Rating
-    rating_m = re.search(r'itemprop="ratingValue"[^>]*content="([^"]+)"', block)
+    # Rating - find the first rating div AFTER the name (pos ~500 in block)
+    block_after_name = block[400:]  # skip image area before name
+    rating_m = re.search(r'itemprop="ratingValue"[^>]*content="([^"]+)"', block_after_name)
     if not rating_m:
-        rating_m = re.search(r'rating-stars--([0-9]+)', block)
+        # rating-stars--75 = 75/20 = 3.75 stars
+        rating_m = re.search(r'class="rating-stars rating-stars--([0-9]+)"', block_after_name)
         if rating_m:
-            # rating-stars--75 means 3.75 stars (out of 5, base 100)
             val = int(rating_m.group(1))
-            rating = round(val / 20, 1) if val > 10 else None
+            rating = round(val / 20, 1) if val > 5 else None
         else:
             rating = None
     else:
