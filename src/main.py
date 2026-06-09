@@ -51,13 +51,17 @@ async def main() -> None:
         dataset     = await Actor.open_dataset()
         total_saved = 0
 
-        for search_item in searches:
+        for s_idx, search_item in enumerate(searches):
             what  = search_item.get("what", "").strip()
             where = search_item.get("where", "").strip()
             if not what or not where:
                 continue
 
-            Actor.log.info(f"▶ '{what}' in '{where}'")
+            # Delay between searches to avoid rate limiting (HTTP 202)
+            if s_idx > 0:
+                await asyncio.sleep(3.0)
+
+            Actor.log.info(f"▶ [{s_idx+1}/{len(searches)}] '{what}' in '{where}'")
             results = await scrape_search(
                 what=what, where=where,
                 max_results=max_results,
@@ -158,6 +162,15 @@ async def scrape_search(what, where, max_results,
                 break
 
             Actor.log.info(f"HTTP {resp.status_code} — {len(resp.text)} chars")
+            if resp.status_code == 202:
+                Actor.log.warning(f"HTTP 202 (rate limit) on page {page} — sleeping 10s and retrying")
+                await asyncio.sleep(10.0)
+                try:
+                    resp = await client.get(url)
+                    Actor.log.info(f"Retry: HTTP {resp.status_code} — {len(resp.text)} chars")
+                except Exception as e:
+                    Actor.log.error(f"Retry failed: {e}")
+                    break
             if resp.status_code != 200:
                 break
 
