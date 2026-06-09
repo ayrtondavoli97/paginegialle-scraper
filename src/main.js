@@ -5,37 +5,55 @@ import * as cheerio from 'cheerio';
 const BASE_URL = 'https://www.paginegialle.it';
 
 // PagineGialle category slug aliases.
-// Some public directory categories use plural or SEO-specific slugs.
+// The input schema uses clean business names; the website often uses SEO/category slugs.
 const SLUG_ALIASES = {
+    'avvocato':            'avvocato',
     'avvocati':            'avvocato',
+    'idraulico':           'idraulico',
     'idraulici':           'idraulico',
+    'parrucchiere':        'parrucchiere',
     'parrucchieri':        'parrucchiere',
+    'farmacia':            'farmacia',
     'farmacie':            'farmacia',
-    'commercialisti':      'commercialista',
+    'agenzia-immobiliare': 'agenzia-immobiliare',
     'agenzie-immobiliari': 'agenzia-immobiliare',
+    'officina-meccanica':  'officina-meccanica',
     'officine-meccaniche': 'officina-meccanica',
+    'dentista':            'dentista',
     'dentisti':            'dentista',
-    'medici':              'medico',
+    'elettricista':        'elettricista',
     'elettricisti':        'elettricista',
+    'fisioterapista':      'fisioterapista',
     'fisioterapisti':      'fisioterapista',
+    'veterinario':         'veterinario',
     'veterinari':          'veterinario',
+    'notaio':              'notaio',
     'notai':               'notaio',
+    'architetto':          'architetto',
     'architetti':          'architetto',
+    'geometra':            'geometra',
     'geometri':            'geometra',
+    'psicologo':           'psicologo',
     'psicologi':           'psicologo',
 
-    // Food and hospitality aliases observed to be weak with direct singular slugs.
-    'trattoria':           'trattorie',
-    'trattorie':           'trattorie',
-    'pasticceria':         'pasticcerie',
-    'pasticcerie':         'pasticcerie',
+    // Categories that returned 0 with singular slugs in the large test run.
+    'commercialista':      'commercialisti',
+    'commercialisti':      'commercialisti',
+    'medico':              'medici',
+    'medici':              'medici',
+
+    // Food / hospitality: use broader known directory sections where the narrow slug is fragile.
+    'trattoria':           'ristoranti',
+    'trattorie':           'ristoranti',
+    'pasticceria':         'pasticcerie-e-confetterie',
+    'pasticcerie':         'pasticcerie-e-confetterie',
     'gelateria':           'gelaterie',
     'gelaterie':           'gelaterie',
-    'enoteca':             'enoteche',
-    'enoteche':            'enoteche',
-    'sushi':               'ristoranti-sushi',
-    'ristorante-sushi':    'ristoranti-sushi',
-    'ristoranti-sushi':    'ristoranti-sushi',
+    'enoteca':             'vini-e-spumanti-vendita-al-dettaglio',
+    'enoteche':            'vini-e-spumanti-vendita-al-dettaglio',
+    'sushi':               'ristoranti-giapponesi',
+    'ristorante-sushi':    'ristoranti-giapponesi',
+    'ristoranti-sushi':    'ristoranti-giapponesi',
 };
 
 function normalizeSlug(text) {
