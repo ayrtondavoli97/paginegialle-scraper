@@ -1,6 +1,7 @@
 {
   "actorSpecification": 1,
-  "fields": {
+  "actorOutputSchemaVersion": 1,
+  "properties": {
     "id": {
       "type": "string",
       "description": "Unique business identifier (UUID from PagineGialle internal database)"
@@ -81,6 +82,5 @@
       "type": "string",
       "description": "The city used in the search query that returned this listing"
     }
-  },
-  "actorOutputSchemaVersion": 1
+  }
 }
