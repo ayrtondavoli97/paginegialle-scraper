@@ -34,8 +34,9 @@ function normalizeSlug(text) {
 }
 
 function buildUrl(what, where, page = 1) {
-    const whatSlug = SLUG_ALIASES[what.toLowerCase()] ?? normalizeSlug(what);
-    const base = `${BASE_URL}/ricerca/${whatSlug}/${normalizeSlug(where)}`;
+    // Apply alias (avvocati→avvocato, idraulici→idraulico, etc.)
+    const resolved = SLUG_ALIASES[what.toLowerCase()] ?? SLUG_ALIASES[normalizeSlug(what)] ?? normalizeSlug(what);
+    const base = `${BASE_URL}/ricerca/${resolved}/${normalizeSlug(where)}`;
     return page > 1 ? `${base}?pg=${page}` : base;
 }
 
@@ -146,16 +147,23 @@ const maxResults = input.maxResults ?? 200;
 const useProxy   = input.useApifyProxy !== false;
 
 // Build searches from categories × cities dropdowns, or use custom searches array
-let searches = input.searches ?? [];
-if (searches.length === 0) {
-    const categories = input.categories ?? ['ristorante'];
-    const cities     = input.cities     ?? ['roma'];
-    for (const what of categories) {
-        for (const where of cities) {
+const manualSearches = (input.searches ?? []).filter(s => s.what && s.where);
+let searches = [];
+
+if (manualSearches.length === 0) {
+    // Use dropdown selections
+    const cats    = [...(input.categories ?? ['ristorante']), ...(input.customCategories ?? [])];
+    const cityArr = [...(input.cities ?? ['roma']), ...(input.customCities ?? [])];
+    for (const what of cats) {
+        for (const where of cityArr) {
             searches.push({ what, where });
         }
     }
-    console.log(`Built ${searches.length} searches from ${categories.length} categories × ${cities.length} cities`);
+    console.log(`Built ${searches.length} searches from ${cats.length} categories × ${cityArr.length} cities`);
+} else {
+    // Use manual searches from Advanced field — apply alias map too
+    searches = manualSearches;
+    console.log(`Using ${searches.length} manual search queries`);
 }
 
 if (!searches.length) { console.error('No searches defined'); await Actor.exit(); }
