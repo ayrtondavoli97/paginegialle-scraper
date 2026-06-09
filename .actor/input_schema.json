@@ -9,11 +9,20 @@
       "description": "List of searches to perform. Each item needs a 'what' (category) and 'where' (city/province).",
       "editor": "json",
       "default": [
-        { "what": "ristoranti", "where": "napoli" },
-        { "what": "avvocati", "where": "milano" }
+        {
+          "what": "ristoranti",
+          "where": "napoli"
+        },
+        {
+          "what": "avvocati",
+          "where": "milano"
+        }
       ],
       "prefill": [
-        { "what": "ristoranti", "where": "napoli" }
+        {
+          "what": "ristoranti",
+          "where": "napoli"
+        }
       ],
       "items": {
         "type": "object",
@@ -29,13 +38,16 @@
             "description": "Where to search (e.g. napoli, milano, roma)"
           }
         },
-        "required": ["what", "where"]
+        "required": [
+          "what",
+          "where"
+        ]
       }
     },
     "maxResults": {
       "title": "Max Results per Search",
       "type": "integer",
-      "description": "Maximum number of listings to extract per search query.",
+      "description": "Maximum number of listings to extract per search query. Each city has ~25 top listings + up to 25 per district (typically 30-150 districts). For large cities (Roma, Milano) you can get 1000-3000+. For smaller cities max is ~200-500.",
       "default": 200,
       "minimum": 1,
       "maximum": 5000
@@ -69,9 +81,25 @@
       "type": "string",
       "description": "Country code for proxy. Use IT for Italian residential IPs.",
       "default": "IT",
-      "enum": ["IT", "DE", "FR", "ES", "GB", "US"],
-      "enumTitles": ["Italy", "Germany", "France", "Spain", "United Kingdom", "United States"]
+      "enum": [
+        "IT",
+        "DE",
+        "FR",
+        "ES",
+        "GB",
+        "US"
+      ],
+      "enumTitles": [
+        "Italy",
+        "Germany",
+        "France",
+        "Spain",
+        "United Kingdom",
+        "United States"
+      ]
     }
   },
-  "required": ["searches"]
+  "required": [
+    "searches"
+  ]
 }

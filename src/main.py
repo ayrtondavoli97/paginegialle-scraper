@@ -59,7 +59,8 @@ async def main() -> None:
 
             # Delay between searches to avoid rate limiting (HTTP 202)
             if s_idx > 0:
-                await asyncio.sleep(3.0)
+                # Longer delay after district-heavy searches to avoid 202 rate limit
+                await asyncio.sleep(8.0)
 
             Actor.log.info(f"▶ [{s_idx+1}/{len(searches)}] '{what}' in '{where}'")
             results = await scrape_search(
@@ -163,11 +164,16 @@ async def scrape_search(what, where, max_results,
 
             Actor.log.info(f"HTTP {resp.status_code} — {len(resp.text)} chars")
             if resp.status_code == 202:
-                Actor.log.warning(f"HTTP 202 (rate limit) on page {page} — sleeping 10s and retrying")
-                await asyncio.sleep(10.0)
+                Actor.log.warning(f"HTTP 202 rate limit — sleeping 15s and retrying")
+                await asyncio.sleep(15.0)
                 try:
                     resp = await client.get(url)
                     Actor.log.info(f"Retry: HTTP {resp.status_code} — {len(resp.text)} chars")
+                    if resp.status_code == 202:
+                        Actor.log.warning("Still 202 after retry — sleeping 30s more")
+                        await asyncio.sleep(30.0)
+                        resp = await client.get(url)
+                        Actor.log.info(f"Retry2: HTTP {resp.status_code}")
                 except Exception as e:
                     Actor.log.error(f"Retry failed: {e}")
                     break
