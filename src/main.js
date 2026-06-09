@@ -4,8 +4,8 @@ import * as cheerio from 'cheerio';
 
 const BASE_URL = 'https://www.paginegialle.it';
 
-
-// PagineGialle category slug aliases (plural -> singular form used by the site)
+// PagineGialle category slug aliases.
+// Some public directory categories use plural or SEO-specific slugs.
 const SLUG_ALIASES = {
     'avvocati':            'avvocato',
     'idraulici':           'idraulico',
@@ -23,6 +23,19 @@ const SLUG_ALIASES = {
     'architetti':          'architetto',
     'geometri':            'geometra',
     'psicologi':           'psicologo',
+
+    // Food and hospitality aliases observed to be weak with direct singular slugs.
+    'trattoria':           'trattorie',
+    'trattorie':           'trattorie',
+    'pasticceria':         'pasticcerie',
+    'pasticcerie':         'pasticcerie',
+    'gelateria':           'gelaterie',
+    'gelaterie':           'gelaterie',
+    'enoteca':             'enoteche',
+    'enoteche':            'enoteche',
+    'sushi':               'ristoranti-sushi',
+    'ristorante-sushi':    'ristoranti-sushi',
+    'ristoranti-sushi':    'ristoranti-sushi',
 };
 
 function normalizeSlug(text) {
@@ -40,7 +53,6 @@ function resolveWhatSlug(what) {
 }
 
 function buildUrl(what, where, page = 1) {
-    // Apply alias (avvocati -> avvocato, idraulici -> idraulico, etc.)
     const resolved = resolveWhatSlug(what);
     const base = `${BASE_URL}/ricerca/${resolved}/${normalizeSlug(where)}`;
     return page > 1 ? `${base}?pg=${page}` : base;
@@ -136,20 +148,30 @@ function parseListings(html, what, where, searchUrl = '', scrapedAt = '') {
 
         let email = '';
         let website = '';
+        let whatsappUrl = '';
+        let contactUrl = '';
         $c.find('a[href]').each((_, a) => {
             const href = $(a).attr('href') || '';
             const absoluteHref = absoluteUrl(href);
+            const lowerHref = absoluteHref.toLowerCase();
+
             if (!email && href.startsWith('mailto:')) {
                 email = href.replace(/^mailto:/i, '').split('?')[0].trim();
             }
+            if (!whatsappUrl && (lowerHref.includes('wa.me/') || lowerHref.includes('api.whatsapp.com'))) {
+                whatsappUrl = absoluteHref;
+            }
             if (!website && absoluteHref.startsWith('http')
-                && !absoluteHref.includes('paginegialle.it')
-                && !absoluteHref.includes('google.')
-                && !absoluteHref.includes('facebook.com')
-                && !absoluteHref.includes('instagram.com')) {
+                && !lowerHref.includes('paginegialle.it')
+                && !lowerHref.includes('google.')
+                && !lowerHref.includes('facebook.com')
+                && !lowerHref.includes('instagram.com')
+                && !lowerHref.includes('wa.me/')
+                && !lowerHref.includes('api.whatsapp.com')) {
                 website = absoluteHref;
             }
         });
+        contactUrl = website || whatsappUrl || '';
 
         listings.push({
             id,
@@ -158,6 +180,8 @@ function parseListings(html, what, where, searchUrl = '', scrapedAt = '') {
             phone:          phones[0] || '',
             email,
             website,
+            contactUrl,
+            whatsappUrl,
             address,
             city:           where,
             province:       '',
@@ -192,12 +216,10 @@ const onlyWithWebsite = input.onlyWithWebsite === true;
 const onlyWithEmail = input.onlyWithEmail === true;
 const runStartedAt = new Date().toISOString();
 
-// Build searches from categories x cities dropdowns, or use custom searches array
 const manualSearches = (input.searches ?? []).filter(s => s.what && s.where);
 let searches = [];
 
 if (manualSearches.length === 0) {
-    // Use dropdown selections
     const cats    = [...(input.categories ?? ['ristorante']), ...(input.customCategories ?? [])];
     const cityArr = [...(input.cities ?? ['roma']), ...(input.customCities ?? [])];
     for (const what of cats) {
@@ -207,7 +229,6 @@ if (manualSearches.length === 0) {
     }
     console.log(`Built ${searches.length} searches from ${cats.length} categories x ${cityArr.length} cities`);
 } else {
-    // Use manual searches from Advanced field; aliases still apply while building URLs.
     searches = manualSearches;
     console.log(`Using ${searches.length} manual search queries`);
 }
@@ -237,12 +258,12 @@ for (let si = 0; si < searches.length; si++) {
     const seenIds   = new Set();
     let districtUrls = [];
     let page1Html    = '';
+    let proxyReportedTotal = 0;
+    let districtProxyConfiguration = proxyConfiguration;
 
-    // Step 1: page 1 + 2 (with direct fallback if proxy gives 0)
-    let proxyForStep1 = proxyConfiguration;
     await new Promise(resolve => {
         const crawler = new HttpCrawler({
-            proxyConfiguration: proxyForStep1,
+            proxyConfiguration,
             maxConcurrency: 2,
             async requestHandler({ body, request }) {
                 const html = body.toString();
@@ -250,7 +271,8 @@ for (let si = 0; si < searches.length; si++) {
 
                 if (lbl === 'P1') {
                     page1Html = html;
-                    console.log(`  Total count: ${extractTotalCount(html)}`);
+                    proxyReportedTotal = extractTotalCount(html);
+                    console.log(`  Total count: ${proxyReportedTotal}`);
                 }
 
                 const listings = parseListings(html, what, where, request.url, runStartedAt);
@@ -279,11 +301,17 @@ for (let si = 0; si < searches.length; si++) {
         ]).then(resolve);
     });
 
-    // If proxy gave 0 results, retry step1 without proxy (direct connection)
-    if (results.length === 0 && proxyConfiguration) {
-        console.log(`  Proxy gave 0 results - retrying direct...`);
+    const weakProxyResult = proxyConfiguration && (
+        results.length === 0 ||
+        (proxyReportedTotal === 0 && districtUrls.length === 0 && results.length <= 25)
+    );
+
+    if (weakProxyResult) {
+        console.log(`  Proxy result looked weak - retrying direct...`);
         page1Html = '';
         districtUrls = [];
+        districtProxyConfiguration = undefined;
+
         await new Promise(resolve => {
             const crawler = new HttpCrawler({
                 maxConcurrency: 2,
@@ -317,14 +345,13 @@ for (let si = 0; si < searches.length; si++) {
         });
     }
 
-    // Step 2: districts (concurrent, proxy rotates IPs)
     if (districtUrls.length > 0 && results.length < maxResults) {
         const needed = maxResults - results.length;
         console.log(`  Crawling up to ${Math.min(districtUrls.length, 200)} districts (need ${needed} more)...`);
 
         await new Promise(resolve => {
             const crawler = new HttpCrawler({
-                proxyConfiguration,
+                proxyConfiguration: districtProxyConfiguration,
                 maxConcurrency: 10,
                 maxRequestsPerMinute: 120,
                 async requestHandler({ body, request }) {
@@ -335,12 +362,14 @@ for (let si = 0; si < searches.length; si++) {
                         if (uid && !seenIds.has(uid)) { seenIds.add(uid); results.push(item); }
                     }
                 },
-                failedRequestHandler() {},
+                failedRequestHandler({ request, error }) {
+                    console.warn(`  District failed: ${request.url} - ${error.message}`);
+                },
             });
             crawler.run(
                 districtUrls.slice(0, 200).map((url, i) => ({
                     url,
-                    uniqueKey: `dist-${what}-${where}-${i}`,
+                    uniqueKey: `dist-${what}-${where}-${i}-${districtProxyConfiguration ? 'proxy' : 'direct'}`,
                 }))
             ).then(resolve);
         });
